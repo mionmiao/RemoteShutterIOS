@@ -1,0 +1,9 @@
+# XcodeGen / CI artifacts
+RemoteShutter.xcodeproj/
+build/
+DerivedData/
+Payload/
+*.ipa
+*.app/
+xcuserdata/
+.DS_Store

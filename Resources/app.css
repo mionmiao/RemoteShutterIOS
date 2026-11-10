@@ -1,0 +1,482 @@
+/* ============================================================
+   远程快门 · 统一主题
+   控制台主页与三个独立视图页共用这一份样式。
+   所有可配置项集中在 :root 的 CSS 变量里，改主题只改这里。
+   ============================================================ */
+
+:root {
+    --bg: #0f1418;
+    --panel: #16202b;
+    --btn: #2b3a4a;
+    --btn-2: #34495e;
+    --fg: #e8eef5;
+    --fg-dim: #cfe3f7;
+    --muted: #9fb3c8;
+    --accent: #1f6feb;
+    --ok: #1f7a3d;
+    --warn: #ffd479;
+    --danger: #c81e1e;
+    --link: #7fd0ff;
+    --radius: 12px;
+    --radius-sm: 8px;
+    /* 画面最大可视高度：用 min(宽度, 74vh*ar) 保证「完整显示 + 不裁切 + 无黑边 + 不滚动」 */
+    --stage-vh: 74vh;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+/* ---------- 通用按钮 ---------- */
+
+.btn, .mini, .newtab, .keybtn, .cbtn {
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #fff;
+    background: var(--btn);
+    cursor: pointer;
+}
+
+.btn { font-size: 14px; padding: 12px 16px; }
+
+.btn.on { background: var(--ok); }
+.btn.rec { background: var(--danger); }
+
+.mini { padding: 6px 10px; font-size: 12px; color: var(--fg-dim); }
+.mini.on { background: var(--accent); color: #fff; }
+
+/* 独立视图页的 cbtn（含清晰度/音质按钮）选中态高亮，与主页 .mini.on 一致 */
+.cbtn.on, .qbtn.on { background: var(--accent); color: #fff; }
+
+.newtab { background: var(--btn-2); }
+
+.keybtn { background: var(--btn-2); }
+.keybtn:active { background: #3d5168; }
+
+/* ---------- 控制台主页布局 ---------- */
+
+body.console {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px;
+}
+
+h1 { font-size: 20px; font-weight: 600; margin: 8px 0 10px; }
+
+.layout {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+    width: 100%;
+    max-width: 1200px;
+}
+
+.camcol {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.mirrorcol {
+    flex: 0 0 320px;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+}
+
+/* ---------- 相机选择标签 ---------- */
+
+.camsel {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-bottom: 12px;
+}
+
+.camtab {
+    border: none;
+    border-radius: 10px;
+    padding: 9px 14px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--fg-dim);
+    background: var(--btn);
+    cursor: pointer;
+}
+
+.camtab.on { background: var(--accent); color: #fff; }
+
+/* ---------- 画面容器 ---------- */
+/* cell 宽高比由 JS 设为「旋转后」的比例（--ar），
+   宽度取 min(可用宽度上限, 74vh*ar) —— 既不被 max-height 破坏比例，也不需要滚动。 */
+
+.preview {
+    width: 100%;
+    background: #000;
+    border-radius: var(--radius);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 4px;
+    max-height: var(--stage-vh);
+}
+
+.pvcell {
+    position: relative;
+    background: #000;
+    overflow: hidden;
+    border-radius: var(--radius-sm);
+    --w: 100%;
+    width: min(var(--w, 100%), calc(var(--stage-vh) * var(--ar, 1.3333)));
+    aspect-ratio: var(--ar, 1.3333);
+}
+
+.preview.both .pvcell {
+    --w: 50%;
+    width: min(50%, calc(var(--stage-vh) * var(--ar, 1.3333)));
+}
+
+/* 每个画面：object-fit:contain + transform 做旋转/镜像/缩放。
+   img 绝对定位居中，尺寸 100%/100%，由 contain 保证整幅完整显示。 */
+.pvcell img {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    transform-origin: center center;
+    background: #000;
+    -webkit-user-drag: none;
+    user-drag: none;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.preview:fullscreen,
+.preview:-webkit-full-screen {
+    max-width: none;
+    width: 100vw;
+    height: 100vh;
+    max-height: none;
+    background: #000;
+}
+
+.preview:fullscreen .pvcell,
+.preview:-webkit-full-screen .pvcell {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+}
+
+/* ---------- 控制行 ---------- */
+
+.row, .mirrow, .zoomrow, .qrow, .arow, .newtabrow {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.row { gap: 12px; margin-top: 14px; }
+.mirrow, .zoomrow, .qrow, .arow { margin: 8px 0 2px; }
+.newtabrow { margin: 10px 0 2px; }
+/* 音质（采样率）按钮：选中态高亮，复用 accent 主题色 */
+.abtn.on { background: var(--accent); color: #fff; }
+
+/* 公网访问卡片 */
+.card {
+    border: 1px solid var(--border, #2a2f3a);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin-top: 14px;
+    background: var(--card, #161a21);
+}
+.urlinput {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 9px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border, #2a2f3a);
+    background: #0e1116;
+    color: var(--fg, #e8edf4);
+    font-size: 13px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* 自建中继配置表单：窄屏单列、宽屏双列，标签与输入框对齐 */
+.relayform {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 8px 14px;
+    margin: 10px 0 4px;
+}
+.relayform label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
+}
+.relayform .urlinput { width: 100%; flex: 1 1 120px; }
+
+.shutter {
+    width: 130px;
+    height: 130px;
+    border-radius: 50%;
+    border: none;
+    background: radial-gradient(circle at 30% 30%, #ff5a5a, #c81e1e);
+    color: #fff;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 8px 24px rgba(200, 30, 30, .4);
+    transition: transform .08s;
+}
+
+.shutter:active { transform: scale(.94); }
+
+/* ---------- 状态与信息区 ---------- */
+
+.status {
+    margin-top: 14px;
+    min-height: 22px;
+    font-size: 15px;
+    color: var(--link);
+}
+
+.last, .recs { margin-top: 12px; width: 100%; }
+.last img { width: 100%; border-radius: 10px; margin-top: 6px; }
+
+.hr {
+    margin-top: 6px;
+    font-size: 14px;
+    color: var(--fg-dim);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.recs a {
+    display: inline-block;
+    margin: 4px 8px 4px 0;
+    color: var(--link);
+    word-break: break-all;
+}
+
+.hint {
+    margin-top: 16px;
+    font-size: 12px;
+    color: #6b7a89;
+    text-align: center;
+    line-height: 1.7;
+}
+
+/* ---------- 参数控制面板 ---------- */
+
+.controls {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    width: 100%;
+    margin-top: 18px;
+}
+
+.ctlpanel {
+    flex: 1 1 320px;
+    background: var(--panel);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+}
+
+.ctltitle {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--fg-dim);
+    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.ctl { margin: 12px 0; }
+
+.ctl label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 14px;
+    margin-bottom: 6px;
+    color: var(--fg-dim);
+}
+
+.ctl .val { color: var(--warn); font-weight: 700; }
+.ctl input[type=range] { width: 100%; accent-color: #ff5a5a; }
+
+.ctl button {
+    margin-top: 8px;
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 7px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #fff;
+    background: var(--btn);
+    cursor: pointer;
+}
+
+/* ---------- 屏幕镜像（右侧内联） ---------- */
+
+.mirrorwrap {
+    width: 100%;
+    margin-top: 0;
+    background: #000;
+    border-radius: var(--radius);
+    overflow: visible;
+    position: relative;
+    display: none;
+}
+
+.mirrorwrap.on { display: block; }
+
+.mirrorwrap img {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-height: var(--stage-vh);
+    object-fit: contain;
+    background: #000;
+    -webkit-user-drag: none;
+    user-drag: none;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.mirrorbar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    color: #fff;
+    font-size: 13px;
+    background: rgba(0, 0, 0, .5);
+}
+
+.mirrorctrls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px;
+    background: #13202c;
+    border-radius: 0 0 var(--radius) var(--radius);
+}
+
+/* ---------- 单视图页（独立标签页） ---------- */
+
+/* 单视图页沿用原本的纯黑底 + 偏蓝文字，保持与改造前一致 */
+body.single { display: block; height: 100%; background: #000; color: #cfe3f7; }
+
+.bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    color: #fff;
+    font-size: 14px;
+    background: rgba(0, 0, 0, .55);
+    z-index: 5;
+}
+
+.stage {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-top: 46px;
+    padding-bottom: 64px;
+    overflow: hidden;
+}
+
+.stage img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    background: #000;
+    -webkit-user-drag: none;
+    user-drag: none;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.ctrls {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: center;
+    padding: 8px 10px;
+    background: rgba(0, 0, 0, .6);
+    z-index: 5;
+}
+
+.sep { width: 1px; height: 24px; background: #567; margin: 0 4px; }
+
+/* ---------- 照片全屏遮罩 ---------- */
+
+.overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: #000;
+    z-index: 50;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.overlaybar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    color: #fff;
+    font-size: 14px;
+    background: rgba(0, 0, 0, .55);
+}
+
+.overlay img { max-width: 100%; max-height: 100%; object-fit: contain; }

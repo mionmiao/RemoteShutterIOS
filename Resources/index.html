@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>远程快门</title>
+<link rel="stylesheet" href="/app.css?v=2">
+<script src="/app.js?v=2"></script>
+</head>
+<body>
+  <h1>📷 远程快门控制（双摄）</h1>
+
+  <div class="layout">
+    <div class="camcol">
+      <div class="camsel">
+        <button class="camtab on" data-cam="back">📷 后置</button>
+        <button class="camtab" data-cam="front">🤳 前置</button>
+        <button class="camtab" data-cam="both">🔲 双画面</button>
+      </div>
+
+      <div class="preview single" id="previewWrap">
+        <div class="pvcell" id="cellBack"><img id="pvBack" src="/video" alt="后置预览"></div>
+        <div class="pvcell" id="cellFront" style="display:none"><img id="pvFront" src="/video/front" alt="前置预览"></div>
+      </div>
+
+      <div class="mirrow">
+        <span>后置：</span>
+        <button class="mini" id="mirrorBack">🔁 镜像</button>
+        <button class="mini" id="rotBack">🔄 旋转</button>
+        <button class="mini" id="zoutBack">🔍－</button>
+        <button class="mini" id="zinBack">🔍＋</button>
+        <button class="mini" id="zresetBack">↺</button>
+        <span>前置：</span>
+        <button class="mini" id="mirrorFront">🔁 镜像</button>
+        <button class="mini" id="rotFront">🔄 旋转</button>
+        <button class="mini" id="zoutFront">🔍－</button>
+        <button class="mini" id="zinFront">🔍＋</button>
+        <button class="mini" id="zresetFront">↺</button>
+      </div>
+
+      <div class="newtabrow">
+        <span>独立新标签页：</span>
+        <button class="newtab" id="openBack">📷 后置</button>
+        <button class="newtab" id="openFront">🤳 前置</button>
+        <button class="newtab" id="openMirror">🖥️ 屏幕镜像</button>
+      </div>
+
+      <div class="row">
+        <button class="shutter" id="shutter">按下快门</button>
+        <button class="btn" id="audioBtn">🔊 开启声音</button>
+        <button class="btn" id="recBtn">⏺ 录像(所选)</button>
+        <button class="btn" id="dualRecBtn">⏺ 双摄录像</button>
+        <button class="btn" id="pipBtn">🖼️ 画中画拍照</button>
+        <button class="btn" id="fsBtn">⛶ 全屏</button>
+        <button class="btn" id="screenBtn">🌑 息屏</button>
+        <button class="btn" id="screenMirrorBtn">🖥️ 屏幕镜像</button>
+        <button class="btn" id="sysAudioBtn">🔈 镜像声音</button>
+        <button class="btn" id="allOffBtn">⏻ 关闭所有摄像头</button>
+        <button class="btn" id="allOnBtn">🔆 打开所有摄像头</button>
+      </div>
+
+      <div class="arow" id="audioQualityRow">
+        <span>音质(网络)：</span>
+        <button class="mini abtn on" data-rate="48000">🔊 清晰</button>
+        <button class="mini abtn" data-rate="16000">⚡ 流畅</button>
+        <button class="mini abtn" data-rate="8000">📞 省流</button>
+      </div>
+
+      <div class="card" id="relayCard">
+        <div class="ctltitle">🌐 公网访问（自建中继 / 户外跨网）</div>
+        <div class="hint">手机主动连你自己的中继服务器，户外用下方链接打开即可，观看端无需装任何东西。需先在 VPS 上部署随附的 relay/server.js（见部署说明）。</div>
+        <div class="relayform">
+          <label>中继地址 <input id="relayServer" class="urlinput" placeholder="wss://rs.example.com/_relay/agent" spellcheck="false"></label>
+          <label>设备 ID <input id="relayId" class="urlinput" placeholder="phone1" spellcheck="false"></label>
+          <label>连接密钥 <input id="relayKey" class="urlinput" type="text" placeholder="AGENT_KEY" spellcheck="false"></label>
+          <label>观看密钥 <input id="relayView" class="urlinput" placeholder="VIEW_KEY（用于生成链接）" spellcheck="false"></label>
+        </div>
+        <div class="row">
+          <button class="btn" id="relayBtn">🔌 连接中继</button>
+          <button class="btn" id="relayStop" style="display:none">⏹ 断开中继</button>
+        </div>
+        <div class="status" id="relayStatus"></div>
+        <div id="relayLinkWrap" style="display:none" class="row">
+          <input id="relayLink" class="urlinput" readonly>
+          <button class="mini" id="relayCopy">复制</button>
+        </div>
+      </div>
+
+      <label class="hr"><input type="checkbox" id="hr"> 🖼️ 高分辨率拍照（原图，依赖相机支持）</label>
+
+      <div class="status" id="status">就绪</div>
+
+      <div class="controls">
+        <div class="ctlpanel">
+          <div class="ctltitle">📷 后置摄像头 <button class="mini" id="enBack">关闭</button></div>
+          <div class="ctl">
+            <label>🔍 变焦 <span class="val" id="zoomValBack">1.0×</span></label>
+            <input type="range" id="zoomBack" min="1" max="4" step="0.1" value="1">
+          </div>
+          <div class="ctl">
+            <label>☀️ 曝光补偿 <span class="val" id="evValBack">0.00 EV</span></label>
+            <input type="range" id="evBack" min="0" max="0" step="1" value="0">
+            <button id="evResetBack">重置曝光</button>
+          </div>
+        </div>
+        <div class="ctlpanel">
+          <div class="ctltitle">🤳 前置摄像头 <button class="mini" id="enFront">关闭</button></div>
+          <div class="ctl">
+            <label>🔍 变焦 <span class="val" id="zoomValFront">1.0×</span></label>
+            <input type="range" id="zoomFront" min="1" max="4" step="0.1" value="1">
+          </div>
+          <div class="ctl">
+            <label>☀️ 曝光补偿 <span class="val" id="evValFront">0.00 EV</span></label>
+            <input type="range" id="evFront" min="0" max="0" step="1" value="0">
+            <button id="evResetFront">重置曝光</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="last" id="last"></div>
+      <div class="recs"><b>录像列表：</b><span id="recList">（暂无）</span></div>
+
+      <div class="hint">
+        可切换「后置 / 前置 / 双画面」同时调用前后摄像头（双画面时两个画面都实时预览）。<br>
+        每个预览画面可独立「镜像 / 旋转」（仅显示效果，不影响所拍照片）。<br>
+        勾选「高分辨率拍照」后按下快门将保存相机最大尺寸原图（不可用则自动回退预览分辨率）。<br>
+        「⏺ 双摄录像」可同时录制前后摄像头；仅首个录像带音轨，其余为视频-only。<br>
+        「🖼️ 画中画拍照」把前置缩放到右下角叠加到后置画面合成一张。<br>
+        「🖥️ 屏幕镜像」需先在手机上授权；镜像画面中点击=点击、拖动=滑动，可远程操控手机。<br>
+        「🌑 息屏」默认自动选择：已 root 则关闭背光（真正熄屏），否则亮度降到 0；亮屏仅恢复亮度，不乱拉满、不关自动亮度。<br>
+        「⏻ 关闭所有摄像头」/「🔆 打开所有摄像头」可独立开关前后摄。<br>
+        点「独立新标签页」可在三个独立标签页分别全屏查看前置 / 后置 / 屏幕镜像。
+      </div>
+    </div>
+
+    <div class="mirrorcol">
+      <div class="mirrorwrap" id="mirrorWrap">
+        <div class="mirrorbar">
+          <span>🖥️ 屏幕镜像（点击=点击，拖动=滑动；放大后可拖动平移）</span>
+          <button class="btn" id="mirrorClose">✕ 关闭</button>
+        </div>
+        <img id="mirrorImg" src="" alt="屏幕镜像" draggable="false">
+        <div class="zoomrow">
+          <span>缩放：</span>
+          <button class="mini" id="mZout">🔍－</button>
+          <button class="mini" id="mZin">🔍＋</button>
+          <button class="mini" id="mZreset">↺ 复位</button>
+        </div>
+        <div class="qrow">
+          <span>清晰度：</span>
+          <button class="mini qbtn" data-w="480" data-q="45">⚡ 流畅</button>
+          <button class="mini qbtn on" data-w="720" data-q="55">⚖ 标准</button>
+          <button class="mini qbtn" data-w="1080" data-q="65">🔎 清晰</button>
+        </div>
+        <div class="mirrorctrls">
+          <button class="keybtn" data-key="back">↩ 返回</button>
+          <button class="keybtn" data-key="home">🏠 主页</button>
+          <button class="keybtn" data-key="recent">▦ 后台</button>
+          <button class="keybtn" data-key="volup">🔊 音量＋</button>
+          <button class="keybtn" data-key="voldown">🔉 音量－</button>
+          <button class="keybtn" data-key="lock">🔒 锁屏</button>
+          <button class="keybtn" data-key="screenshot">📸 截图</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const status = document.getElementById('status');
+    const last = document.getElementById('last');
+    const recList = document.getElementById('recList');
+
+    let selCam = 'back';
+    let availableCams = ['back'];
+    let paramsCache = {};
+    let evStepNum = 1, evStepDen = 1;
+
+    const pvBack = document.getElementById('pvBack');
+    const pvFront = document.getElementById('pvFront');
+    const cellBack = document.getElementById('cellBack');
+    const cellFront = document.getElementById('cellFront');
+    const previewWrap = document.getElementById('previewWrap');
+    const camTabs = document.querySelectorAll('.camtab');
+
+    // 每个预览画面的镜像/旋转状态
+    const camXform = { back: { mirror: false, rot: 0 }, front: { mirror: false, rot: 0 } };
+    // 记录各路画面的自然宽高比（由首帧加载时更新）
+    const camAR = { back: 4/3, front: 4/3 };
+    // 缩放/平移交给共享模块维护，redraw 回调里叠加本页的镜像/旋转并同步 cell 宽高比
+    const zp = {
+      back: RS.createZoomPan(() => applyXform('back')),
+      front: RS.createZoomPan(() => applyXform('front'))
+    };
+    function applyXform(cam) {
+      const el = (cam === 'back') ? pvBack : pvFront;
+      const cell = (cam === 'back') ? cellBack : cellFront;
+      const st = camXform[cam];
+      const ar = camAR[cam] || (4/3);
+      const z = zp[cam].zoom;
+      const p = zp[cam].pan;
+      // 居中 -> 平移(缩放查看时) -> 缩放 -> 镜像 -> 旋转
+      let t = 'translate(-50%,-50%) translate(' + p.x + 'px,' + p.y + 'px) scale(' + z + ')';
+      if (st.mirror) t += ' scaleX(-1)';
+      if (st.rot) t += ' rotate(' + st.rot + 'deg)';
+      el.style.transform = t;
+      el.style.objectFit = 'contain';
+      // cell 宽高比设为「旋转后」的画面比例（--ar），并用 CSS min() 约束，
+      // 避免被 max-height 破坏比例导致裁切；img 框用自然比例并放大到 ar*100%，旋转后恰好填满 cell。
+      const rotated = (st.rot === 90 || st.rot === 270);
+      const car = rotated ? (1 / ar) : ar;
+      cell.style.setProperty('--ar', car.toFixed(4));
+      cell.style.aspectRatio = car;
+      if (rotated) {
+        el.style.width = (ar * 100) + '%';
+        el.style.height = 'auto';
+        el.style.aspectRatio = ar;
+      } else {
+        el.style.width = '100%';
+        el.style.height = '100%';
+        el.style.aspectRatio = ar;
+      }
+    }
+    function onFrameLoaded(cam) {
+      const el = (cam === 'back') ? pvBack : pvFront;
+      if (el.naturalWidth && el.naturalHeight) {
+        camAR[cam] = el.naturalWidth / el.naturalHeight;
+        applyXform(cam);
+      }
+    }
+    pvBack.addEventListener('load', () => onFrameLoaded('back'));
+    pvFront.addEventListener('load', () => onFrameLoaded('front'));
+    document.getElementById('mirrorBack').onclick = () => { camXform.back.mirror = !camXform.back.mirror; applyXform('back'); };
+    document.getElementById('rotBack').onclick = () => { camXform.back.rot = (camXform.back.rot + 90) % 360; applyXform('back'); };
+    document.getElementById('mirrorFront').onclick = () => { camXform.front.mirror = !camXform.front.mirror; applyXform('front'); };
+    document.getElementById('rotFront').onclick = () => { camXform.front.rot = (camXform.front.rot + 90) % 360; applyXform('front'); };
+    RS.bindZoomButtons(zp.back, { in: 'zinBack', out: 'zoutBack', reset: 'zresetBack' });
+    RS.bindZoomButtons(zp.front, { in: 'zinFront', out: 'zoutFront', reset: 'zresetFront' });
+
+    function updatePreviewVisibility() {
+      if (selCam === 'both') {
+        previewWrap.className = 'preview both';
+        cellBack.style.display = ''; cellFront.style.display = '';
+      } else if (selCam === 'front') {
+        previewWrap.className = 'preview single';
+        cellBack.style.display = 'none'; cellFront.style.display = '';
+      } else {
+        previewWrap.className = 'preview single';
+        cellBack.style.display = ''; cellFront.style.display = 'none';
+      }
+    }
+
+    function evInStops(v) { return (v * (evStepNum / evStepDen)); }
+
+    function applyToPanel(cam, j) {
+      if (cam === 'back') {
+        zoomBack.max = j.maxZoom; zoomBack.step = 0.1; zoomBack.value = j.zoom;
+        zoomValBack.textContent = (+j.zoom).toFixed(1) + '×';
+        evBack.min = j.evMin; evBack.max = j.evMax; evBack.step = 1; evBack.value = j.ev;
+        evStepNum = j.evStepNum; evStepDen = j.evStepDen;
+        evValBack.textContent = evInStops(j.ev).toFixed(2) + ' EV';
+      } else {
+        zoomFront.max = j.maxZoom; zoomFront.step = 0.1; zoomFront.value = j.zoom;
+        zoomValFront.textContent = (+j.zoom).toFixed(1) + '×';
+        evFront.min = j.evMin; evFront.max = j.evMax; evFront.step = 1; evFront.value = j.ev;
+        evStepNum = j.evStepNum; evStepDen = j.evStepDen;
+        evValFront.textContent = evInStops(j.ev).toFixed(2) + ' EV';
+      }
+    }
+
+    camTabs.forEach(t => t.addEventListener('click', () => {
+      camTabs.forEach(x => x.classList.remove('on'));
+      t.classList.add('on');
+      selCam = t.dataset.cam;
+      updatePreviewVisibility();
+      const ref = (selCam === 'both') ? (availableCams.includes('back') ? 'back' : availableCams[0]) : selCam;
+      if (paramsCache[ref]) applyToPanel(ref, paramsCache[ref]);
+    }));
+
+    async function loadParams() {
+      try {
+        const r = await fetch('/params'); const j = await r.json();
+        availableCams = j.available || ['back'];
+        camTabs.forEach(t => {
+          if (t.dataset.cam !== 'both' && !availableCams.includes(t.dataset.cam)) t.style.display = 'none';
+        });
+        for (const c of availableCams) {
+          const r2 = await fetch('/params?cam=' + c);
+          paramsCache[c] = await r2.json();
+          applyToPanel(c, paramsCache[c]);
+        }
+      } catch (e) { }
+    }
+
+    // 前后摄独立变焦/曝光
+    const zoomBack = document.getElementById('zoomBack');
+    const zoomValBack = document.getElementById('zoomValBack');
+    const evBack = document.getElementById('evBack');
+    const evValBack = document.getElementById('evValBack');
+    const zoomFront = document.getElementById('zoomFront');
+    const zoomValFront = document.getElementById('zoomValFront');
+    const evFront = document.getElementById('evFront');
+    const evValFront = document.getElementById('evValFront');
+    let zBT = null, zFT = null, eBT = null, eFT = null;
+
+    zoomBack.addEventListener('input', () => {
+      const lv = parseFloat(zoomBack.value); zoomValBack.textContent = lv.toFixed(1) + '×';
+      clearTimeout(zBT); zBT = setTimeout(() => fetch('/zoom?cam=back&level=' + lv, { method: 'POST' }).catch(() => {}), 70);
+    });
+    zoomFront.addEventListener('input', () => {
+      const lv = parseFloat(zoomFront.value); zoomValFront.textContent = lv.toFixed(1) + '×';
+      clearTimeout(zFT); zFT = setTimeout(() => fetch('/zoom?cam=front&level=' + lv, { method: 'POST' }).catch(() => {}), 70);
+    });
+    evBack.addEventListener('input', () => {
+      const v = parseInt(evBack.value, 10); evValBack.textContent = evInStops(v).toFixed(2) + ' EV';
+      clearTimeout(eBT); eBT = setTimeout(() => fetch('/exposure?cam=back&ev=' + v, { method: 'POST' }).catch(() => {}), 70);
+    });
+    evFront.addEventListener('input', () => {
+      const v = parseInt(evFront.value, 10); evValFront.textContent = evInStops(v).toFixed(2) + ' EV';
+      clearTimeout(eFT); eFT = setTimeout(() => fetch('/exposure?cam=front&ev=' + v, { method: 'POST' }).catch(() => {}), 70);
+    });
+    document.getElementById('evResetBack').addEventListener('click', () => {
+      evBack.value = 0; evValBack.textContent = '0.00 EV';
+      fetch('/exposure?cam=back&ev=0', { method: 'POST' }).catch(() => {});
+    });
+    document.getElementById('evResetFront').addEventListener('click', () => {
+      evFront.value = 0; evValFront.textContent = '0.00 EV';
+      fetch('/exposure?cam=front&ev=0', { method: 'POST' }).catch(() => {});
+    });
+
+    // 前后摄独立开关
+    let backOn = true, frontOn = true;
+    const enBack = document.getElementById('enBack');
+    const enFront = document.getElementById('enFront');
+    enBack.onclick = () => {
+      backOn = !backOn;
+      fetch('/camera/enable?cam=back&on=' + (backOn ? 1 : 0), { method: 'POST' }).then(r => r.json()).then(j => {
+        enBack.textContent = backOn ? '关闭' : '打开';
+        enBack.classList.toggle('on', !backOn);
+      }).catch(() => {});
+    };
+    enFront.onclick = () => {
+      frontOn = !frontOn;
+      fetch('/camera/enable?cam=front&on=' + (frontOn ? 1 : 0), { method: 'POST' }).then(r => r.json()).then(j => {
+        enFront.textContent = frontOn ? '关闭' : '打开';
+        enFront.classList.toggle('on', !frontOn);
+      }).catch(() => {});
+    };
+    document.getElementById('allOffBtn').onclick = () => {
+      fetch('/camera/enable?cam=both&on=0', { method: 'POST' }).then(r => r.json()).then(j => {
+        backOn = false; frontOn = false;
+        enBack.textContent = '打开'; enFront.textContent = '打开';
+        enBack.classList.add('on'); enFront.classList.add('on');
+        status.textContent = '已关闭所有摄像头';
+      }).catch(() => {});
+    };
+    document.getElementById('allOnBtn').onclick = () => {
+      fetch('/camera/enable?cam=both&on=1', { method: 'POST' }).then(r => r.json()).then(j => {
+        backOn = true; frontOn = true;
+        enBack.textContent = '关闭'; enFront.textContent = '关闭';
+        enBack.classList.remove('on'); enFront.classList.remove('on');
+        status.textContent = '已打开所有摄像头';
+      }).catch(() => {});
+    };
+
+    // 屏幕镜像系统媒体音频（WebSocket PCM -> WebAudio，与麦克风通道独立）
+    const sysAudio = RS.bindSystemAudio('sysAudioBtn', (t) => { status.textContent = t; });
+
+    // 预览全屏
+    document.getElementById('fsBtn').addEventListener('click', () => {
+      const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+      if (!fsEl) {
+        const req = previewWrap.requestFullscreen || previewWrap.webkitRequestFullscreen;
+        if (req) req.call(previewWrap);
+      } else {
+        const exit = document.exitFullscreen || document.webkitExitFullscreen;
+        if (exit) exit.call(document);
+      }
+    });
+
+    // 浏览器控制手机端息屏
+    let screenOff = false;
+    const screenBtn = document.getElementById('screenBtn');
+    screenBtn.addEventListener('click', async () => {
+      const next = !screenOff;
+      try {
+        const r = await fetch('/screen?state=' + (next ? 'off' : 'on'), { method: 'POST' });
+        const j = await r.json();
+        if (!j.ok) { status.textContent = '息屏控制失败'; return; }
+        screenOff = next;
+        screenBtn.textContent = screenOff ? '💡 亮屏' : '🌑 息屏';
+        screenBtn.classList.toggle('on', screenOff);
+        if (screenOff) {
+          status.textContent = j.real
+            ? '🔌 背光已关闭（真正熄屏：相机/声音/遥控仍在运行，比暗屏更省电）'
+            : '🌑 已暗屏省电（亮度降到 0；相机/声音/遥控持续运行）';
+        } else {
+          status.textContent = '💡 手机已亮屏（亮度保持原有/自动，未强制拉满）';
+        }
+      } catch (e) { status.textContent = '息屏请求失败，检查连接'; }
+    });
+
+    // 拍照
+    document.getElementById('shutter').addEventListener('click', async () => {
+      status.textContent = '拍摄中…';
+      try {
+        const hr = document.getElementById('hr').checked ? 1 : 0;
+        const cam = selCam;
+        const r = await fetch('/capture?cam=' + cam + '&high=' + hr, { method: 'POST' });
+        const j = await r.json();
+        if (j.ok) {
+          status.textContent = (hr ? '高分辨率 ' : '') + '已触发 ✓（静音）';
+          setTimeout(async () => {
+            try {
+              const lr = await fetch('/last'); const lj = await lr.json();
+              const name = lj[cam] || (cam === 'both' ? (lj.back || lj.front) : null);
+              if (name) last.innerHTML = '<div>最新照片（' + cam + '）：</div><img src="/photo/' +
+                encodeURIComponent(name) + '?t=' + Date.now() + '">';
+            } catch (e) { }
+          }, 500);
+        } else status.textContent = '未成功：' + (j.msg || '');
+      } catch (e) { status.textContent = '请求失败，检查连接'; }
+    });
+
+    // 现场声音（麦克风，WebSocket PCM -> WebAudio；与镜像声音互不干扰）
+    const micAudio = RS.bindMicAudio('audioBtn', (t) => { status.textContent = t; });
+
+    // 录像（所选摄像头）
+    let recording = false;
+    const recBtn = document.getElementById('recBtn');
+    recBtn.addEventListener('click', async () => {
+      try {
+        if (!recording) {
+          const recCam = (selCam === 'both') ? 'back' : selCam;
+          const r = await fetch('/record/start?cam=' + recCam, { method: 'POST' });
+          const j = await r.json();
+          if (j.ok) {
+            recording = true;
+            recBtn.textContent = '⏹ 停止录像';
+            recBtn.classList.add('rec');
+            status.textContent = '● 录像中…（如带音轨则现场声音暂停）';
+            if (micAudio.isOn()) micAudio.stop();
+          } else status.textContent = '录像启动失败';
+        } else {
+          const r = await fetch('/record/stop', { method: 'POST' });
+          const j = await r.json();
+          recording = false;
+          recBtn.textContent = '⏺ 录像(所选)';
+          recBtn.classList.remove('rec');
+          if (j.ok) { status.textContent = '录像已保存'; refreshRecordings(); }
+          else status.textContent = '停止录像失败';
+        }
+      } catch (e) { status.textContent = '录像请求失败'; }
+    });
+
+    // 双摄同时录像
+    let dualRec = false;
+    const dualRecBtn = document.getElementById('dualRecBtn');
+    dualRecBtn.addEventListener('click', async () => {
+      try {
+        if (!dualRec) {
+          const r = await fetch('/record/start?cam=both', { method: 'POST' });
+          const j = await r.json();
+          if (j.ok) {
+            dualRec = true;
+            dualRecBtn.textContent = '⏹ 停止双摄录像';
+            dualRecBtn.classList.add('rec');
+            status.textContent = '● 双摄录像中…（仅一个带音轨）';
+            if (micAudio.isOn()) micAudio.stop();
+          } else status.textContent = '双摄录像启动失败';
+        } else {
+          const r = await fetch('/record/stop?cam=both', { method: 'POST' });
+          const j = await r.json();
+          dualRec = false;
+          dualRecBtn.textContent = '⏺ 双摄录像';
+          dualRecBtn.classList.remove('rec');
+          if (j.ok) { status.textContent = '双摄录像已停止'; refreshRecordings(); }
+          else status.textContent = '停止失败';
+        }
+      } catch (e) { status.textContent = '双摄录像请求失败'; }
+    });
+
+    // 画中画拍照
+    const pipBtn = document.getElementById('pipBtn');
+    pipBtn.addEventListener('click', async () => {
+      status.textContent = '画中画合成中…';
+      try {
+        const r = await fetch('/capture/pip', { method: 'POST' });
+        const j = await r.json();
+        if (j.ok) {
+          status.textContent = '🖼️ 画中画已保存 ✓';
+          const lr = await fetch('/last'); const lj = await lr.json();
+          const name = lj.pip;
+          if (name) last.innerHTML = '<div>画中画：</div><img src="/photo/' + encodeURIComponent(name) + '?t=' + Date.now() + '">';
+        } else status.textContent = '画中画失败：' + (j.msg || '');
+      } catch (e) { status.textContent = '画中画请求失败'; }
+    });
+
+    // 屏幕镜像 + 远程点击（与主预览同页内联显示）
+    let mirrorOn = false;
+    const screenMirrorBtn = document.getElementById('screenMirrorBtn');
+    const mirrorWrap = document.getElementById('mirrorWrap');
+    const mirrorImg = document.getElementById('mirrorImg');
+    // 镜像流：开启后自动加载；断流时轮询状态，后端看门狗恢复后自动重载，无需手动刷新
+    const mirrorStream = RS.bindMirrorStream(mirrorImg, {
+      start: '/screenmirror?start=1',
+      stop: '/screenmirror?stop=1',
+      status: '/screenmirror/status',
+      stream: '/screenmirror',
+      onStatus: (t) => { status.textContent = t; }
+    });
+    screenMirrorBtn.addEventListener('click', async () => {
+      if (mirrorOn) return;
+      const ok = await mirrorStream.start();
+      if (ok) {
+        mirrorOn = true;
+        mirrorWrap.classList.add('on');
+        screenMirrorBtn.classList.add('on');
+        screenMirrorBtn.textContent = '🖥️ 屏幕镜像(开)';
+        status.textContent = '请在手机上允许屏幕录制权限…';
+      } else status.textContent = '屏幕镜像启动失败';
+    });
+    document.getElementById('mirrorClose').addEventListener('click', () => {
+      mirrorOn = false;
+      mirrorWrap.classList.remove('on');
+      mirrorStream.stop();
+      screenMirrorBtn.classList.remove('on');
+      screenMirrorBtn.textContent = '🖥️ 屏幕镜像';
+      status.textContent = '屏幕镜像已关闭';
+    });
+    // 独立新标签页分别查看前置 / 后置 / 屏幕镜像
+    document.getElementById('openBack').onclick = () => window.open('/cam/back', '_blank');
+    document.getElementById('openFront').onclick = () => window.open('/cam/front', '_blank');
+    document.getElementById('openMirror').onclick = () => window.open('/cam/mirror', '_blank');
+    // 镜像画面：缩放/平移 + 点击/滑动注入（复用共享模块，与独立视图页行为一致）
+    const mirrorZp = RS.createZoomPan(function () {
+      mirrorImg.style.transformOrigin = 'center center';
+      mirrorImg.style.transform = 'translate(' + mirrorZp.pan.x + 'px,' + mirrorZp.pan.y + 'px) scale(' + mirrorZp.zoom + ')';
+    });
+    RS.bindZoomButtons(mirrorZp, { in: 'mZin', out: 'mZout', reset: 'mZreset' });
+    // 镜像快捷按键（锁屏/返回/主页/后台/音量/截图），经 root input keyevent
+    RS.bindKeyButtons('.keybtn');
+    // 清晰度切换：机型性能差异大，固定档位不够用，交给用户现场挑
+    document.querySelectorAll('.qbtn').forEach(function (b) {
+      b.addEventListener('click', function () {
+        document.querySelectorAll('.qbtn').forEach(function (x) { x.classList.remove('on'); });
+        b.classList.add('on');
+        mirrorStream.setQuality(
+          parseInt(b.getAttribute('data-w'), 10),
+          parseInt(b.getAttribute('data-q'), 10)
+        );
+      });
+    });
+    RS.bindGestures(mirrorImg, mirrorZp, {
+      onTap: (nx, ny) => RS.sendTap(nx, ny, 'tap'),
+      onSwipe: (x1, y1, x2, y2) => RS.sendTap(x1, y1, 'swipe', x2, y2)
+    });
+
+    async function refreshRecordings() {
+      try {
+        const r = await fetch('/recordings');
+        const list = await r.json();
+        if (Array.isArray(list) && list.length) {
+          recList.innerHTML = list.map(n =>
+            '<a href="/rec/' + encodeURIComponent(n) + '" target="_blank" download>' + n + '</a>'
+          ).join('');
+        } else recList.textContent = '（暂无）';
+      } catch (e) { }
+    }
+
+    updatePreviewVisibility();
+    refreshRecordings();
+    loadParams();
+
+    // 音质（采样率）切换：同时作用于麦克风与镜像系统声，应对不同网络环境。
+    // 采样率越低带宽越小：48k≈96KB/s(清晰) / 16k≈32KB/s(流畅) / 8k≈16KB/s(省流，适合弱网)。
+    const aqBtns = document.querySelectorAll('#audioQualityRow .abtn');
+    function setAudioRate(rate) {
+        aqBtns.forEach(b => b.classList.toggle('on', +b.getAttribute('data-rate') === rate));
+        micAudio.setRate(rate);
+        sysAudio.setRate(rate);
+        status.textContent = '🔧 音质已设为 ' + (rate / 1000) + 'kHz' +
+            (rate <= 16000 ? '（省流，适合弱网）' : '（清晰，较耗流量）');
+    }
+    aqBtns.forEach(b => b.addEventListener('click', () => setAudioRate(+b.getAttribute('data-rate'))));
+
+    // 户外/跨网：自建中继（手机主动出站连中继服务器，浏览器访问中继）
+    const relayServer = document.getElementById('relayServer');
+    const relayId = document.getElementById('relayId');
+    const relayKey = document.getElementById('relayKey');
+    const relayView = document.getElementById('relayView');
+    const relayBtn = document.getElementById('relayBtn');
+    const relayStop = document.getElementById('relayStop');
+    const relayStatus = document.getElementById('relayStatus');
+    const relayLinkWrap = document.getElementById('relayLinkWrap');
+    const relayLink = document.getElementById('relayLink');
+    const relayCopy = document.getElementById('relayCopy');
+    let relayTimer = null;
+
+    function paintRelay(s) {
+      if (s.server && !relayServer.value) relayServer.value = s.server;
+      if (s.id && !relayId.value) relayId.value = s.id;
+      if (s.key && !relayKey.value) relayKey.value = s.key;
+      if (s.view && !relayView.value) relayView.value = s.view;
+      const on = !!s.online;
+      relayBtn.style.display = on ? 'none' : '';
+      relayStop.style.display = on ? '' : 'none';
+      relayLinkWrap.style.display = (on && s.link) ? '' : 'none';
+      if (s.link) relayLink.value = s.link;
+      if (on) {
+        relayStatus.textContent = '✅ 中继已连接，户外用下面链接打开即可：';
+      } else if (s.enabled && s.state === 'connecting') {
+        relayStatus.textContent = '⏳ 正在连接中继…';
+      } else if (s.error) {
+        relayStatus.textContent = '❌ ' + s.error;
+      } else if (s.enabled) {
+        relayStatus.textContent = '⏳ 中继未连上，正在自动重连…';
+      } else {
+        relayStatus.textContent = '未连接。填好上面四项后点「连接中继」。';
+      }
+    }
+    async function refreshRelay() {
+      try { paintRelay(await fetch('/relay').then(x => x.json())); } catch (e) { }
+    }
+    relayBtn.addEventListener('click', async () => {
+      relayBtn.disabled = true;
+      relayStatus.textContent = '正在连接中继…';
+      try {
+        const q = new URLSearchParams({
+          action: 'start', url: relayServer.value.trim(), id: relayId.value.trim(),
+          key: relayKey.value.trim(), view: relayView.value.trim()
+        });
+        const s = await fetch('/relay?' + q.toString()).then(x => x.json());
+        if (!s.ok) { relayStatus.textContent = '❌ ' + (s.error || '参数不完整'); relayBtn.disabled = false; return; }
+        paintRelay(s);
+        if (relayTimer) clearInterval(relayTimer);
+        let tries = 0;
+        relayTimer = setInterval(async () => {
+          tries++;
+          const t = await fetch('/relay').then(x => x.json()).catch(() => null);
+          if (t) paintRelay(t);
+          if ((t && t.online) || tries > 40 || (t && t.error)) {
+            clearInterval(relayTimer); relayTimer = null; relayBtn.disabled = false;
+          }
+        }, 1500);
+      } catch (e) {
+        relayStatus.textContent = '请求失败：' + e;
+        relayBtn.disabled = false;
+      }
+    });
+    relayStop.addEventListener('click', async () => {
+      await fetch('/relay?action=stop');
+      if (relayTimer) { clearInterval(relayTimer); relayTimer = null; }
+      relayBtn.disabled = false;
+      relayStatus.textContent = '中继已断开';
+      await refreshRelay();
+      relayBtn.style.display = '';
+      relayStop.style.display = 'none';
+      relayLinkWrap.style.display = 'none';
+      relayStatus.textContent = '中继已断开';
+    });
+    relayCopy.addEventListener('click', () => {
+      relayLink.select();
+      try { document.execCommand('copy'); } catch (e) { }
+      relayCopy.textContent = '已复制';
+      setTimeout(() => { relayCopy.textContent = '复制'; }, 1500);
+    });
+    refreshRelay();
+  </script>
+</body>
+</html>

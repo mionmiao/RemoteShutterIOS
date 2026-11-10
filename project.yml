@@ -1,0 +1,40 @@
+name: RemoteShutter
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "18.0"
+  generateEmptyDirectories: false
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    CODE_SIGNING_ALLOWED: NO
+    CODE_SIGNING_REQUIRED: NO
+    CODE_SIGN_IDENTITY: ""
+    ENABLE_BITCODE: NO
+    CLANG_ENABLE_MODULES: YES
+targets:
+  RemoteShutter:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: Resources
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.remoteshutter.ios
+        INFOPLIST_FILE: Info.plist
+        PRODUCT_NAME: RemoteShutter
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+schemes:
+  RemoteShutter:
+    build:
+      targets:
+        RemoteShutter: all
+    run:
+      config: Debug
+    archive:
+      config: Release
