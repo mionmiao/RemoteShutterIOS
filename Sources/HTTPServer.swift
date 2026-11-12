@@ -289,7 +289,9 @@ private final class Client {
     private func params(query: String) {
         // 前端 loadParams() 期望 /params 返回可用摄像头数组，用它决定是否隐藏「前置」标签。
         if qs(query, "cam") == nil {
-            send(RSUtil.json(["available": ["back", "front"]]), type: "application/json")
+            let primary = UserDefaults.standard.string(forKey: "rs.primary") ?? "back"
+            send(RSUtil.json(["available": ["back", "front"], "primary": primary]),
+                 type: "application/json")
             return
         }
         send(RSUtil.json(ServiceHub.shared.camera.params(pos: cam(query))), type: "application/json")

@@ -6,9 +6,49 @@
 <title>远程快门</title>
 <link rel="stylesheet" href="/app.css?v=2">
 <script src="/app.js?v=2"></script>
+<style id="ios-tweaks">
+  /* iOS 版：隐藏未实现的 Android 入口。只隐藏 DOM，不删除，避免共享脚本取不到元素。 */
+  #recBtn, #dualRecBtn, #pipBtn, #screenBtn, #screenMirrorBtn, #sysAudioBtn,
+  #allOffBtn, #allOnBtn, #openMirror, #enBack, #enFront,
+  .mirrorcol, .recs, .keybtn, .camcol > .hint,
+  .controls .ctlpanel + .ctlpanel { display: none !important; }
+
+  /* 触屏适配：44px 最小点击区、防 iOS 自动缩放、安全区 */
+  html { -webkit-text-size-adjust: 100%; }
+  body { font-size: 16px; padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+  button, .btn, .mini, .newtab, .camtab, .cbtn {
+    min-height: 44px; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .mini { font-size: 13px; padding: 8px 12px; }
+  .camtab { font-size: 16px; padding: 10px 18px; }
+  .shutter { min-height: 58px; font-size: 18px; }
+  .row, .mirrow, .newtabrow, .arow { flex-wrap: wrap; justify-content: center; gap: 10px; }
+  .preview { max-height: 62vh; }
+  input[type="range"] { min-height: 44px; }
+  .urlinput { font-size: 16px; }
+
+  /* iOS 状态提示条 */
+  .ios-note {
+    width: 100%; max-width: 900px; margin: 0 auto 12px;
+    padding: 10px 14px; border-radius: 10px;
+    background: rgba(90,160,255,.12); border: 1px solid rgba(120,180,255,.35);
+    color: var(--fg, #e8f0ff); font-size: 14px; line-height: 1.5; text-align: center;
+  }
+  .ios-note.busy { background: rgba(255,190,80,.14); border-color: rgba(255,190,80,.45); }
+  #iosCamState { font-weight: 600; margin-bottom: 4px; }
+  @media (max-width: 700px) {
+    h1 { font-size: 20px; }
+    .controls { flex-direction: column; }
+    .preview { max-height: 52vh; }
+  }
+</style>
 </head>
 <body>
-  <h1>📷 远程快门控制（双摄）</h1>
+  <h1>📷 远程快门 · iOS</h1>
+  <div class="ios-note" id="iosNote">
+    <div id="iosCamState">当前主摄：后置</div>
+    <div>单摄模式：点上方的「后置 / 前置」切换物理摄像头（约 1 秒重建会话）。屏幕镜像、录像、系统内录、远程点击在 iOS 版未实现。</div>
+  </div>
 
   <div class="layout">
     <div class="camcol">
@@ -92,7 +132,7 @@
 
       <div class="controls">
         <div class="ctlpanel">
-          <div class="ctltitle">📷 后置摄像头 <button class="mini" id="enBack">关闭</button></div>
+          <div class="ctltitle">⚙️ 当前主摄参数 <button class="mini" id="enBack">关闭</button></div>
           <div class="ctl">
             <label>🔍 变焦 <span class="val" id="zoomValBack">1.0×</span></label>
             <input type="range" id="zoomBack" min="1" max="4" step="0.1" value="1">
@@ -181,6 +221,19 @@
     const cellFront = document.getElementById('cellFront');
     const previewWrap = document.getElementById('previewWrap');
     const camTabs = document.querySelectorAll('.camtab');
+    const bothTab = document.querySelector('.camtab[data-cam="both"]');
+    if (bothTab) {
+      bothTab.textContent = '🔲 并排（同摄）';
+      bothTab.title = '单摄模式：两格显示同一个当前主摄';
+    }
+    const iosNote = document.getElementById('iosNote');
+    const iosCamState = document.getElementById('iosCamState');
+    let iosNoteTimer = null;
+    function setIosCamState(text, busy) {
+      if (!iosCamState) return;
+      iosCamState.textContent = text;
+      if (iosNote) iosNote.classList.toggle('busy', !!busy);
+    }
 
     // 每个预览画面的镜像/旋转状态
     const camXform = { back: { mirror: false, rot: 0 }, front: { mirror: false, rot: 0 } };
@@ -275,16 +328,37 @@
       // iOS 单摄版：点「后置/前置」时通知 app 切换物理摄像头。
       // 「双画面」不发请求，避免两路预览互相抢同一个摄像头。
       if (selCam === 'back' || selCam === 'front') {
-        fetch('/camera?cam=' + selCam, { method: 'POST' }).catch(function () { });
+        const target = selCam;
+        const label = target === 'back' ? '后置' : '前置';
+        setIosCamState('⏳ 正在切换到' + label + '…', true);
+        fetch('/camera?cam=' + target, { method: 'POST' })
+          .then(function () {
+            clearTimeout(iosNoteTimer);
+            iosNoteTimer = setTimeout(function () {
+              setIosCamState('当前主摄：' + label, false);
+            }, 1200);
+          })
+          .catch(function () { setIosCamState('切换失败：app 未运行或服务已停止', true); });
+      } else {
+        setIosCamState('并排显示当前主摄（单摄模式两格相同）', false);
       }
       const ref = (selCam === 'both') ? (availableCams.includes('back') ? 'back' : availableCams[0]) : selCam;
-      if (paramsCache[ref]) applyToPanel(ref, paramsCache[ref]);
+      // iOS 单摄：只保留一块参数面板，始终用它展示当前所选摄像头的参数
+      if (paramsCache[ref]) applyToPanel('back', paramsCache[ref]);
     }));
 
     async function loadParams() {
       try {
         const r = await fetch('/params'); const j = await r.json();
         availableCams = j.available || ['back'];
+        // 刷新页面时与 app 端当前主摄对齐（单摄模式标签只是视角，不是两路独立摄像头）
+        if (j.primary) {
+          const p = (j.primary === 'front') ? 'front' : 'back';
+          selCam = p;
+          camTabs.forEach(t => t.classList.toggle('on', t.dataset.cam === p));
+          updatePreviewVisibility();
+          setIosCamState('当前主摄：' + (p === 'front' ? '前置' : '后置'), false);
+        }
         camTabs.forEach(t => {
           if (t.dataset.cam !== 'both' && !availableCams.includes(t.dataset.cam)) t.style.display = 'none';
         });

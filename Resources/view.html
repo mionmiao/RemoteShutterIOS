@@ -4,6 +4,18 @@
 <title>远程快门</title>
 <link rel="stylesheet" href="/app.css?v=2">
 <script src="/app.js?v=2"></script>
+<style id="ios-tweaks">
+  /* iOS 版未实现录像，只隐藏不删除（脚本仍会取该元素） */
+  #rec, .keybtn, #sysAudio { display: none !important; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { font-size: 16px; padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+  button, .cbtn, .mini {
+    min-height: 44px; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  .ctrls { flex-wrap: wrap; justify-content: center; gap: 8px; }
+  .stage img { max-height: 70vh; }
+  @media (max-width: 700px) { .stage img { max-height: 58vh; } }
+</style>
 </head>
 <body>
   <div class="bar"><span id="vtitle">📷 远程快门</span>
