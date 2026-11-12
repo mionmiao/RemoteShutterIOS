@@ -47,7 +47,7 @@ final class CameraService: NSObject, ObservableObject,
         inputs.removeAll()
         outputs.removeAll()
         photoOutput = nil
-        lock.lock(); frames.removeAll(); times.removeAll(); lock.unlock()
+        // 保留最后一帧：切换主摄时 MJPEG 连接不断、画面不黑，新会话首帧到达后自然覆盖。
     }
 
     /// 默认单摄（标准 AVCaptureSession，最稳）。双摄由 UI 开关开启，走 AVCaptureMultiCamSession。
@@ -236,10 +236,14 @@ final class CameraService: NSObject, ObservableObject,
     func params(pos: Pos) -> [String: Any] {
         q.sync { () -> [String: Any] in
             guard let d = (inputs[pos]?.device ?? inputs[.back]?.device) else { return [:] }
+            let minEv = Double(d.minExposureTargetBias)
+            let maxEv = Double(d.maxExposureTargetBias)
             return [
                 "maxZoom": Double(min(d.activeFormat.videoMaxZoomFactor, 8)),
-                "minEv": Double(d.minExposureTargetBias),
-                "maxEv": Double(d.maxExposureTargetBias),
+                "zoom": 1.0,
+                "minEv": minEv, "maxEv": maxEv,
+                "evMin": minEv, "evMax": maxEv,
+                "ev": 0, "evStepNum": 1, "evStepDen": 1,
                 "available": outputs[pos] != nil || outputs[.back] != nil
             ]
         }

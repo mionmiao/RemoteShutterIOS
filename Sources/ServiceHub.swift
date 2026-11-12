@@ -100,9 +100,11 @@ final class ServiceHub: ObservableObject {
     }
 
     func setPrimary(_ raw: String) {
+        let changed = (primaryRaw != raw)
         primaryRaw = raw
         UserDefaults.standard.set(raw, forKey: "rs.primary")
-        guard started else { return }
+        // 前端每次点标签都会发请求；重复值不重建会话，避免来回抢摄像头。
+        guard started, changed else { return }
         camera.rebuild()
     }
 

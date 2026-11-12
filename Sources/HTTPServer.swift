@@ -167,6 +167,17 @@ private final class Client {
         case ("GET", "/app.css"): serveStatic("app.css")
         case ("GET", "/app.js"): serveStatic("app.js")
         case ("GET", "/view.html"): serveStatic("view.html")
+        // 前端「后置 / 前置」标签：单摄版通过切换物理主摄来实现。
+        case ("POST", "/camera"):
+            let c = qs(query, "cam") ?? "back"
+            if c == "back" || c == "front" { ServiceHub.shared.setPrimary(c) }
+            send(RSUtil.json(["ok": true, "cam": c]), type: "application/json")
+        // 「独立新标签页」按钮走 /cam/back | /cam/front，返回同一个 view.html。
+        case ("GET", "/cam/back"), ("GET", "/cam/front"):
+            let c = path.hasSuffix("front") ? "front" : "back"
+            ServiceHub.shared.setPrimary(c)
+            serveStatic("view.html")
+        case ("GET", "/cam/mirror"): unsupported()
         case ("GET", "/video"): startMJPEG(.back)
         case ("GET", "/video/front"): startMJPEG(.front)
         case ("GET", "/audio"): startAudioWS(key: headers["sec-websocket-key"] ?? "", query: query)
@@ -276,6 +287,11 @@ private final class Client {
     }
 
     private func params(query: String) {
+        // 前端 loadParams() 期望 /params 返回可用摄像头数组，用它决定是否隐藏「前置」标签。
+        if qs(query, "cam") == nil {
+            send(RSUtil.json(["available": ["back", "front"]]), type: "application/json")
+            return
+        }
         send(RSUtil.json(ServiceHub.shared.camera.params(pos: cam(query))), type: "application/json")
     }
 

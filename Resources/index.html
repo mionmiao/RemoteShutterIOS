@@ -272,6 +272,11 @@
       t.classList.add('on');
       selCam = t.dataset.cam;
       updatePreviewVisibility();
+      // iOS 单摄版：点「后置/前置」时通知 app 切换物理摄像头。
+      // 「双画面」不发请求，避免两路预览互相抢同一个摄像头。
+      if (selCam === 'back' || selCam === 'front') {
+        fetch('/camera?cam=' + selCam, { method: 'POST' }).catch(function () { });
+      }
       const ref = (selCam === 'both') ? (availableCams.includes('back') ? 'back' : availableCams[0]) : selCam;
       if (paramsCache[ref]) applyToPanel(ref, paramsCache[ref]);
     }));
