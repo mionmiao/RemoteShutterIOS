@@ -53,13 +53,54 @@ final class HTTPServer {
         lock.lock(); let all = Array(clients.values); lock.unlock()
         guard let hub else { return }
         for c in all {
-            if let pos = c.stream {
-                // 单摄模式下 /video/front 回退到后置帧，避免前端双画面黑屏。
-                let jpg = hub.camera.latestFrame(pos) ?? hub.camera.latestFrame(.back)
-                if let jpg { c.sendFrame(jpg) }
-            }
-            if c.audio, let pcm = hub.audio.takePCM() { c.sendWS(pcm) }
+            // 单摄模式下两路 URL 都指向当前主摄；双摄模式下各走各的物理摄像头。
+            if let pos = c.stream, let jpg = hub.camera.latestFrame(pos) { c.sendFrame(jpg) }
         }
+    }
+
+    /// 音频帧按采集节奏逐个推给每个 /audio 客户端，并各自重采样到浏览器 AudioContext 的采样率。
+    func broadcastPCM(_ pcm: Data, sourceRate: Double) {
+        lock.lock(); let all = Array(clients.values); lock.unlock()
+        for c in all where c.audio {
+            let out = resamplePCM(pcm, from: sourceRate, to: c.audioRate)
+            if !out.isEmpty { c.sendWS(out) }
+        }
+    }
+
+    private func sample(_ d: Data, _ i: Int) -> Int16 {
+        let lo = UInt16(d[2 * i])
+        let hi = UInt16(d[2 * i + 1])
+        return Int16(bitPattern: lo | (hi << 8))
+    }
+
+    /// 16bit/mono 线性插值重采样。浏览器 ?rate= 与设备采集率不一致时必须做，
+    /// 否则播放消耗速率与下发速率不匹配 → 队列欠载 → 静音填补 → 听起来卡。
+    private func resamplePCM(_ src: Data, from: Double, to: Double) -> Data {
+        guard from > 0, to > 0, abs(from - to) >= 1 else { return src }
+        let n = src.count / 2
+        guard n > 1 else { return src }
+        let outN = Int(Double(n) * (to / from))
+        guard outN > 0 else { return Data() }
+        var out = Data()
+        out.reserveCapacity(outN * 2)
+        let step = from / to
+        var pos = 0.0
+        for _ in 0..<outN {
+            let i = Int(pos)
+            var v = 0.0
+            if i + 1 < n {
+                let f = pos - Double(i)
+                v = Double(sample(src, i)) * (1 - f) + Double(sample(src, i + 1)) * f
+            } else if i < n {
+                v = Double(sample(src, i))
+            }
+            let clamped = Int16(max(-32768.0, min(32767.0, v)))
+            let u = UInt16(bitPattern: clamped)
+            out.append(UInt8(u & 0xff))
+            out.append(UInt8(u >> 8))
+            pos += step
+        }
+        return out
     }
 }
 
@@ -71,6 +112,7 @@ private final class Client {
     private var routed = false
     fileprivate var stream: CameraService.Pos?
     fileprivate var audio = false
+    fileprivate var audioRate: Double = 48_000
 
     init(conn: NWConnection, server: HTTPServer) {
         self.conn = conn
@@ -186,7 +228,10 @@ private final class Client {
             if err != nil { self?.forceClose() }
         })
         audio = true
-        _ = query   // 采样率档位：AudioService 固定 48kHz，前端「省流」需后续接重采样
+        // 浏览器把 AudioContext 的实际采样率放在 ?rate=，据此重采样。
+        if let r = Double(qs(query, "rate") ?? ""), r >= 8_000, r <= 96_000 {
+            audioRate = r
+        }
     }
 
     func sendWS(_ payload: Data) {

@@ -2,14 +2,19 @@ import AVFoundation
 import UIKit
 import Foundation
 
-/// 麦克风 PCM(48k/16bit/mono) → /audio WebSocket；同时用静音播放维持 audio 后台会话。
-/// 免费 Apple ID 没有 APNs VoIP 证书，这是 iOS 18/26 上唯一可用的后台保活通道。
+/// 麦克风 PCM(16bit/mono) → /audio WebSocket；同时用静音播放维持 audio 后台会话。
+/// 修复卡顿：不再用定时器批量攒包，改为每个采集回调直接推一帧（与前端 ScriptProcessor
+/// 的 4096 帧块对齐），并由 HTTPServer 按浏览器 ?rate= 重采样到实际播放率。
 final class AudioService: ObservableObject {
     private var engine: AVAudioEngine?
     private var player: AVAudioPlayerNode?
-    private let lock = NSLock()
-    private var pending = Data()
     private var running = false
+
+    /// 每帧 PCM 的投递回调，由 ServiceHub 接到 HTTPServer.broadcastPCM。
+    var onPCM: ((Data) -> Void)?
+
+    /// 设备真实采样率（44.1k / 48k 都可能），不能用 48k 硬编码。
+    private(set) var actualSampleRate: Double = 48_000
 
     /// 后台是否继续保活。主力机分时默认 false：退到后台就释放麦克风（去掉橙点、省电）。
     var keepAlive = false {
@@ -39,7 +44,9 @@ final class AudioService: ObservableObject {
         let e = AVAudioEngine()
         let input = e.inputNode
         let inFmt = input.outputFormat(forBus: 0)
-        input.installTap(onBus: 0, bufferSize: 3840, format: inFmt) { [weak self] buf, _ in
+        actualSampleRate = inFmt.sampleRate > 0 ? inFmt.sampleRate : 48_000
+        // 4096 帧 = 前端 ScriptProcessor 的一个处理块，节奏对齐可消除欠载静音。
+        input.installTap(onBus: 0, bufferSize: 4096, format: inFmt) { [weak self] buf, _ in
             self?.push(buf)
         }
 
@@ -72,21 +79,13 @@ final class AudioService: ObservableObject {
         engine = nil
         player = nil
         running = false
-        lock.lock(); pending.removeAll(); lock.unlock()
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-    }
-
-    func takePCM() -> Data? {
-        lock.lock(); defer { lock.unlock() }
-        guard !pending.isEmpty else { return nil }
-        let d = pending
-        pending.removeAll(keepingCapacity: true)
-        return d
     }
 
     private func push(_ buf: AVAudioPCMBuffer) {
         guard let ch = buf.floatChannelData else { return }
         let n = Int(buf.frameLength)
+        guard n > 0 else { return }
         let src = ch[0]
         var samples = [Int16]()
         samples.reserveCapacity(n)
@@ -95,9 +94,6 @@ final class AudioService: ObservableObject {
             samples.append(Int16(s * 32767))
         }
         let data = samples.withUnsafeBytes { Data($0) }
-        lock.lock()
-        pending.append(data)
-        if pending.count > 256 * 1024 { pending = Data(pending.suffix(64 * 1024)) }
-        lock.unlock()
+        onPCM?(data)
     }
 }

@@ -13,10 +13,21 @@ struct RootView: View {
                     Section("服务") {
                         LabeledContent("状态", value: hub.status)
                         LabeledContent("局域网", value: hub.address.isEmpty ? "—" : hub.address)
+                        LabeledContent("相机", value: hub.cameraNote.isEmpty ? "—" : hub.cameraNote)
                         Button(hub.started ? "停止服务" : "启动服务") { hub.toggleService() }
                         Toggle("黑屏遮罩（不真锁屏）", isOn: $hub.blackout)
                         Toggle("退到后台仍保持声音/中继", isOn: $hub.backgroundAudio)
-                        Toggle("尝试双摄（实验，会重建相机）", isOn: $hub.multiCam)
+                        Toggle("尝试双摄（实验）", isOn: Binding(
+                            get: { hub.multiCam },
+                            set: { hub.setMultiCam($0) }
+                        ))
+                        Picker("主摄（单摄模式）", selection: Binding(
+                            get: { hub.primaryRaw },
+                            set: { hub.setPrimary($0) }
+                        )) {
+                            Text("后置").tag("back")
+                            Text("前置").tag("front")
+                        }
                     }
                     Section("公网中继（可选，自建 server.js）") {
                         TextField("ws://<VPS>:8787/_relay/agent", text: $relayURL)
@@ -30,7 +41,7 @@ struct RootView: View {
                         }
                     }
                     Section("分时说明") {
-                        Text("前台：相机、预览、拍照、中继全部可用。\n后台/锁屏：iOS 强制中断相机，只剩声音与链路；回到前台自动恢复。\n默认单摄（最稳）；双摄为实验开关，硬件不支持会自动降级，单摄时前置画面回退后置。\n免费 Apple ID 签名 7 天有效，需 Sideloadly / AltStore 续签。")
+                        Text("前台：相机、预览、拍照、中继全部可用。\n后台/锁屏：iOS 强制中断相机，只剩声音与链路；回到前台自动恢复。\n单摄：网页的「后置/前置/双画面」都显示当前主摄，切换主摄请用上面的选择器。\n双摄：开启后前后各一路；硬件不支持会自动降级，状态栏会显示原因。\n声音：按浏览器 AudioContext 采样率重采样后逐帧推送。\n免费 Apple ID 签名 7 天有效，需 Sideloadly / AltStore 续签。")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }

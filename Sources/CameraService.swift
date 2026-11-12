@@ -27,6 +27,7 @@ final class CameraService: NSObject, ObservableObject,
     private var lastName = ""
     private var photoHandlers: [Int64: (Data?) -> Void] = [:]
     private var wantRunning = false
+    private var isMulti = false
     private var startedAt: TimeInterval = 0
     private var observers: [NSObjectProtocol] = []
 
@@ -54,12 +55,15 @@ final class CameraService: NSObject, ObservableObject,
     private func build(forceSingle: Bool = false) {
         resetForRebuild()
         let wantMulti = !forceSingle && UserDefaults.standard.bool(forKey: "rs.multiCam")
+        let primary = Pos(rawValue: UserDefaults.standard.string(forKey: "rs.primary") ?? "back") ?? .back
         let useMulti = wantMulti && AVCaptureMultiCamSession.isMultiCamSupported
+        isMulti = useMulti
         let s: AVCaptureSession = useMulti ? AVCaptureMultiCamSession() : AVCaptureSession()
         s.beginConfiguration()
         if !useMulti, s.canSetSessionPreset(.medium) { s.sessionPreset = .medium }
 
-        let list: [Pos] = useMulti ? [.back, .front] : [.back]
+        // 单摄模式只挂「主摄」这一路物理摄像头；主摄可由 app UI 切换。
+        let list: [Pos] = useMulti ? [.back, .front] : [primary]
         for p in list {
             let position: AVCaptureDevice.Position = (p == .back) ? .back : .front
             guard let dev = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position),
@@ -82,16 +86,22 @@ final class CameraService: NSObject, ObservableObject,
         }
         s.commitConfiguration()
 
+        // 单摄：唯一输出同时登记到两个键，两条 URL 都显示当前主摄（不再伪装成「后摄+前摄」）。
+        if !useMulti, let only = outputs[primary] {
+            outputs[.back] = only
+            outputs[.front] = only
+        }
+
         // 双路输出任一失败 → 自动降级单摄，避免半残会话。
         if useMulti, outputs[.back] == nil || outputs[.front] == nil {
-            publish("双摄不可用，自动降级单摄")
+            publish("双摄不可用，已自动降级单摄")
             build(forceSingle: true)
             return
         }
 
         session = s
         startedAt = Date.timeIntervalSinceReferenceDate
-        publish(useMulti ? "双摄会话（实验）" : "单摄会话")
+        publish(useMulti ? "双摄会话（前后各一路）" : "单摄会话（主摄 \(primary.rawValue)）")
 
         let c = NotificationCenter.default
         let interrupted = Notification.Name("AVCaptureSessionWasInterruptedNotification")
@@ -105,6 +115,14 @@ final class CameraService: NSObject, ObservableObject,
             self?.resume()
         })
         if wantRunning { s.startRunning() }
+    }
+
+    /// 开关 / 主摄变更后重建会话（build 每次从 UserDefaults 读最新配置）。
+    func rebuild() {
+        q.async {
+            self.session?.stopRunning()
+            self.build()
+        }
     }
 
     func resume() {
@@ -236,9 +254,14 @@ final class CameraService: NSObject, ObservableObject,
         let image = CIImage(cvPixelBuffer: pb)
         guard let cg = ci.createCGImage(image, from: image.extent) else { return }
         guard let jpg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.55) else { return }
+        let now = Date.timeIntervalSinceReferenceDate
         lock.lock()
         frames[pos] = jpg
-        times[pos] = Date.timeIntervalSinceReferenceDate
+        times[pos] = now
+        if !isMulti {
+            frames[.back] = jpg; frames[.front] = jpg
+            times[.back] = now;  times[.front] = now
+        }
         lock.unlock()
     }
 

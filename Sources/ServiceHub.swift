@@ -12,17 +12,12 @@ final class ServiceHub: ObservableObject {
     @Published var address = ""
     @Published var blackout = false
     @Published var backgroundAudio = false
+    @Published var cameraNote = ""
 
-    /// 默认关：走标准单摄会话。开启后才用 AVCaptureMultiCamSession（实验，按需）。
-    @Published var multiCam = UserDefaults.standard.bool(forKey: "rs.multiCam") {
-        didSet {
-            UserDefaults.standard.set(multiCam, forKey: "rs.multiCam")
-            guard started else { return }
-            camera.stop()
-            camera.start()
-            camera.resume()
-        }
-    }
+    // SwiftUI 的 Binding 赋值走 @Published.wrappedValue setter，不会触发属性 didSet。
+    // 所有需要副作用的开关都改为显式方法 setMultiCam / setPrimary。
+    @Published var multiCam = UserDefaults.standard.bool(forKey: "rs.multiCam")
+    @Published var primaryRaw = UserDefaults.standard.string(forKey: "rs.primary") ?? "back"
 
     let camera = CameraService()
     let audio = AudioService()
@@ -65,6 +60,10 @@ final class ServiceHub: ObservableObject {
         started = true
         camera.start()
         audio.start()
+        audio.onPCM = { [weak self] pcm in
+            guard let self else { return }
+            self.http.broadcastPCM(pcm, sourceRate: self.audio.actualSampleRate)
+        }
         do {
             try http.start()
             address = "http://\(NetUtils.localIPv4()):8080"
@@ -73,7 +72,9 @@ final class ServiceHub: ObservableObject {
             status = "HTTP 启动失败: \(error.localizedDescription)"
         }
         watchdog = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.camera.checkFreeze()
+            guard let self else { return }
+            self.camera.checkFreeze()
+            DispatchQueue.main.async { self.cameraNote = self.camera.note }
         }
         connectRelayIfConfigured()
     }
@@ -82,6 +83,7 @@ final class ServiceHub: ObservableObject {
         watchdog?.invalidate(); watchdog = nil
         relay?.stop(); relay = nil; relayStatus = "未连接"
         http.stop()
+        audio.onPCM = nil
         audio.stop()
         camera.stop()
         started = false
@@ -89,6 +91,20 @@ final class ServiceHub: ObservableObject {
     }
 
     func toggleService() { started ? stop() : startIfNeeded() }
+
+    func setMultiCam(_ on: Bool) {
+        multiCam = on
+        UserDefaults.standard.set(on, forKey: "rs.multiCam")
+        guard started else { return }
+        camera.rebuild()
+    }
+
+    func setPrimary(_ raw: String) {
+        primaryRaw = raw
+        UserDefaults.standard.set(raw, forKey: "rs.primary")
+        guard started else { return }
+        camera.rebuild()
+    }
 
     func connectRelayIfConfigured() {
         guard !relayURL.isEmpty, !agentKey.isEmpty else { return }
