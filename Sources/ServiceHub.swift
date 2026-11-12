@@ -18,6 +18,11 @@ final class ServiceHub: ObservableObject {
     // 所有需要副作用的开关都改为显式方法 setMultiCam / setPrimary。
     @Published var multiCam = UserDefaults.standard.bool(forKey: "rs.multiCam")
     @Published var primaryRaw = UserDefaults.standard.string(forKey: "rs.primary") ?? "back"
+    @Published var relayEnabled = UserDefaults.standard.bool(forKey: "rs.relayEnabled")
+    @Published var relayLink = ""
+
+    /// 最近一次中继错误，供网页 /relay 状态展示。
+    var relayLastError: String?
 
     let camera = CameraService()
     let audio = AudioService()
@@ -26,6 +31,7 @@ final class ServiceHub: ObservableObject {
 
     private(set) var started = false
     private var watchdog: Timer?
+    private var lastPublicFetch: TimeInterval = 0
 
     private init() {}
 
@@ -40,6 +46,10 @@ final class ServiceHub: ObservableObject {
     var agentKey: String {
         get { UserDefaults.standard.string(forKey: "rs.agentKey") ?? "" }
         set { UserDefaults.standard.set(newValue, forKey: "rs.agentKey") }
+    }
+    var viewKey: String {
+        get { UserDefaults.standard.string(forKey: "rs.viewKey") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "rs.viewKey") }
     }
 
     func onForeground() {
@@ -76,7 +86,8 @@ final class ServiceHub: ObservableObject {
             self.camera.checkFreeze()
             DispatchQueue.main.async { self.cameraNote = self.camera.note }
         }
-        connectRelayIfConfigured()
+        // 用户点过「断开中继」后不应在下次启动又自动连上。
+        if relayEnabled { connectRelayIfConfigured(); buildRelayLink() }
     }
 
     func stop() {
@@ -108,11 +119,17 @@ final class ServiceHub: ObservableObject {
         camera.rebuild()
     }
 
+    // MARK: - 中继（网页 /relay 协议，与 Android 版前端表单对齐）
+
     func connectRelayIfConfigured() {
         guard !relayURL.isEmpty, !agentKey.isEmpty else { return }
         relay?.stop()
         let c = RelayClient { [weak self] state in
-            DispatchQueue.main.async { self?.relayStatus = state }
+            DispatchQueue.main.async {
+                self?.relayStatus = state
+                if state == "在线" { self?.relayLastError = nil }
+                else if state.contains("注册被拒绝") { self?.relayLastError = state }
+            }
         }
         relay = c
         c.connect(url: relayURL, deviceId: deviceId, agentKey: agentKey, localPort: 8080)
@@ -120,6 +137,56 @@ final class ServiceHub: ObservableObject {
 
     func saveRelay(url: String, id: String, key: String) {
         relayURL = url; deviceId = id; agentKey = key
+        relayEnabled = true
+        UserDefaults.standard.set(true, forKey: "rs.relayEnabled")
+        relayLastError = nil
         connectRelayIfConfigured()
+        buildRelayLink()
+    }
+
+    func stopRelay() {
+        relay?.stop()
+        relay = nil
+        relayEnabled = false
+        UserDefaults.standard.set(false, forKey: "rs.relayEnabled")
+        relayStatus = "未连接"
+        relayLink = ""
+        relayLastError = nil
+    }
+
+    /// 观看链接：先给直连地址兜底，再尝试从中继 /_relay/public 取 Cloudflare 临时域名。
+    func buildRelayLink() {
+        guard let base = relayHTTPBase() else { relayLink = ""; return }
+        relayLink = "\(base)/d/\(deviceId)/?k=\(viewKey)"
+        tryFetchPublicBase(base)
+    }
+
+    /// 前端每 1.5s 轮询 /relay，这里做 20s 节流，避免打爆中继。
+    func refreshRelayLink() {
+        guard relayEnabled, let base = relayHTTPBase() else { return }
+        tryFetchPublicBase(base)
+    }
+
+    private func relayHTTPBase() -> String? {
+        guard let u = URLComponents(string: relayURL), let host = u.host, !host.isEmpty else { return nil }
+        let scheme = (u.scheme?.lowercased() == "wss") ? "https" : "http"
+        let port = u.port.map { ":\($0)" } ?? ""
+        return "\(scheme)://\(host)\(port)"
+    }
+
+    private func tryFetchPublicBase(_ fallback: String) {
+        let now = Date.timeIntervalSinceReferenceDate
+        guard now - lastPublicFetch > 20 else { return }
+        lastPublicFetch = now
+        guard let url = URL(string: fallback + "/_relay/public") else { return }
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            guard let data,
+                  let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let pub = obj["base"] as? String, !pub.isEmpty else { return }
+            DispatchQueue.main.async {
+                guard let self, self.relayEnabled else { return }
+                self.relayLink = pub + "/d/" + self.deviceId + "/?k=" + self.viewKey
+            }
+        }.resume()
     }
 }

@@ -172,6 +172,8 @@ private final class Client {
             let c = qs(query, "cam") ?? "back"
             if c == "back" || c == "front" { ServiceHub.shared.setPrimary(c) }
             send(RSUtil.json(["ok": true, "cam": c]), type: "application/json")
+        // 网页「公网访问」卡片沿用 Android 端 /relay 协议：?action=start|stop / 无参数取状态。
+        case ("GET", "/relay"): relay(query: query)
         // 「独立新标签页」按钮走 /cam/back | /cam/front，返回同一个 view.html。
         case ("GET", "/cam/back"), ("GET", "/cam/front"):
             let c = path.hasSuffix("front") ? "front" : "back"
@@ -284,6 +286,39 @@ private final class Client {
         let info = ServiceHub.shared.camera.lastPhotoInfo()
         guard let data = info.data, path.contains(info.name) else { unsupported(); return }
         send(data, type: "image/jpeg")
+    }
+
+    /// 与 index.html 的 paintRelay() 字段对齐，让网页表单能直接配置 iOS 端中继。
+    private func relay(query: String) {
+        let hub = ServiceHub.shared
+        switch qs(query, "action") ?? "" {
+        case "start":
+            let url = qs(query, "url") ?? ""
+            let id = qs(query, "id") ?? "phone1"
+            let key = qs(query, "key") ?? ""
+            hub.viewKey = qs(query, "view") ?? ""
+            guard !url.isEmpty, !key.isEmpty else {
+                send(RSUtil.json(["ok": false, "error": "中继地址与连接密钥不能为空"]),
+                     type: "application/json")
+                return
+            }
+            hub.saveRelay(url: url, id: id, key: key)
+        case "stop":
+            hub.stopRelay()
+        default:
+            hub.refreshRelayLink()
+        }
+        let online = (hub.relayStatus == "在线")
+        let connecting = (hub.relayStatus == "连接中" || hub.relayStatus == "重连中")
+        send(RSUtil.json([
+            "ok": true,
+            "server": hub.relayURL, "id": hub.deviceId,
+            "key": hub.agentKey, "view": hub.viewKey,
+            "online": online, "enabled": hub.relayEnabled,
+            "state": online ? "online" : (connecting ? "connecting" : "offline"),
+            "error": hub.relayLastError ?? "",
+            "link": hub.relayLink
+        ]), type: "application/json")
     }
 
     private func params(query: String) {
