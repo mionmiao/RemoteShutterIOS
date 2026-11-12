@@ -53,7 +53,11 @@ final class HTTPServer {
         lock.lock(); let all = Array(clients.values); lock.unlock()
         guard let hub else { return }
         for c in all {
-            if let pos = c.stream, let jpg = hub.camera.latestFrame(pos) { c.sendFrame(jpg) }
+            if let pos = c.stream {
+                // 单摄模式下 /video/front 回退到后置帧，避免前端双画面黑屏。
+                let jpg = hub.camera.latestFrame(pos) ?? hub.camera.latestFrame(.back)
+                if let jpg { c.sendFrame(jpg) }
+            }
             if c.audio, let pcm = hub.audio.takePCM() { c.sendWS(pcm) }
         }
     }

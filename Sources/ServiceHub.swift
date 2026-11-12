@@ -13,6 +13,17 @@ final class ServiceHub: ObservableObject {
     @Published var blackout = false
     @Published var backgroundAudio = false
 
+    /// 默认关：走标准单摄会话。开启后才用 AVCaptureMultiCamSession（实验，按需）。
+    @Published var multiCam = UserDefaults.standard.bool(forKey: "rs.multiCam") {
+        didSet {
+            UserDefaults.standard.set(multiCam, forKey: "rs.multiCam")
+            guard started else { return }
+            camera.stop()
+            camera.start()
+            camera.resume()
+        }
+    }
+
     let camera = CameraService()
     let audio = AudioService()
     lazy var http = HTTPServer(hub: self)

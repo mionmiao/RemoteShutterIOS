@@ -40,11 +40,24 @@ final class CameraService: NSObject, ObservableObject,
         }
     }
 
-    private func build() {
-        let useMulti = AVCaptureMultiCamSession.isMultiCamSupported
+    private func resetForRebuild() {
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
+        observers.removeAll()
+        inputs.removeAll()
+        outputs.removeAll()
+        photoOutput = nil
+        lock.lock(); frames.removeAll(); times.removeAll(); lock.unlock()
+    }
+
+    /// 默认单摄（标准 AVCaptureSession，最稳）。双摄由 UI 开关开启，走 AVCaptureMultiCamSession。
+    /// 注意：AVCaptureMultiCamSession **不支持 sessionPreset**，设置任何值都会抛 NSException。
+    private func build(forceSingle: Bool = false) {
+        resetForRebuild()
+        let wantMulti = !forceSingle && UserDefaults.standard.bool(forKey: "rs.multiCam")
+        let useMulti = wantMulti && AVCaptureMultiCamSession.isMultiCamSupported
         let s: AVCaptureSession = useMulti ? AVCaptureMultiCamSession() : AVCaptureSession()
         s.beginConfiguration()
-        s.sessionPreset = .medium
+        if !useMulti, s.canSetSessionPreset(.medium) { s.sessionPreset = .medium }
 
         let list: [Pos] = useMulti ? [.back, .front] : [.back]
         for p in list {
@@ -62,13 +75,23 @@ final class CameraService: NSObject, ObservableObject,
             s.addOutput(out)
             outputs[p] = out
         }
-        let po = AVCapturePhotoOutput()
-        if s.canAddOutput(po) { s.addOutput(po); photoOutput = po }
+        // multiCam 对 AVCapturePhotoOutput 兼容性差，双摄模式下拍照统一回退预览帧。
+        if !useMulti {
+            let po = AVCapturePhotoOutput()
+            if s.canAddOutput(po) { s.addOutput(po); photoOutput = po }
+        }
         s.commitConfiguration()
+
+        // 双路输出任一失败 → 自动降级单摄，避免半残会话。
+        if useMulti, outputs[.back] == nil || outputs[.front] == nil {
+            publish("双摄不可用，自动降级单摄")
+            build(forceSingle: true)
+            return
+        }
 
         session = s
         startedAt = Date.timeIntervalSinceReferenceDate
-        publish(useMulti ? "双摄会话" : "单摄会话（多摄不可用）")
+        publish(useMulti ? "双摄会话（实验）" : "单摄会话")
 
         let c = NotificationCenter.default
         let interrupted = Notification.Name("AVCaptureSessionWasInterruptedNotification")
@@ -130,10 +153,17 @@ final class CameraService: NSObject, ObservableObject,
 
     func capture(pos: Pos, completion: @escaping (Data?) -> Void) {
         q.async {
-            guard let po = self.photoOutput,
-                  let conn = po.connections.first(where: { c in
+            // 双摄 / 无 PhotoOutput 时退回最近一帧预览 JPEG，保证 /capture 永远有图。
+            guard let po = self.photoOutput else {
+                completion(self.latestFrame(pos))
+                return
+            }
+            guard let conn = po.connections.first(where: { c in
                       c.inputPorts.contains { $0.mediaType == .video }
-                  }) else { completion(nil); return }
+                  }) else {
+                completion(self.latestFrame(pos))
+                return
+            }
             let settings: AVCapturePhotoSettings
             if po.availablePhotoCodecTypes.contains(.jpeg) {
                 settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
@@ -165,7 +195,7 @@ final class CameraService: NSObject, ObservableObject,
 
     func setZoom(_ level: CGFloat, pos: Pos) {
         q.async {
-            guard let d = self.inputs[pos]?.device else { return }
+            guard let d = (self.inputs[pos]?.device ?? self.inputs[.back]?.device) else { return }
             do {
                 try d.lockForConfiguration()
                 d.videoZoomFactor = min(max(1, level), min(d.activeFormat.videoMaxZoomFactor, 8))
@@ -176,7 +206,7 @@ final class CameraService: NSObject, ObservableObject,
 
     func setExposure(_ ev: Float, pos: Pos) {
         q.async {
-            guard let d = self.inputs[pos]?.device else { return }
+            guard let d = (self.inputs[pos]?.device ?? self.inputs[.back]?.device) else { return }
             do {
                 try d.lockForConfiguration()
                 d.setExposureTargetBias(max(d.minExposureTargetBias, min(d.maxExposureTargetBias, ev)), completionHandler: nil)
@@ -187,12 +217,12 @@ final class CameraService: NSObject, ObservableObject,
 
     func params(pos: Pos) -> [String: Any] {
         q.sync { () -> [String: Any] in
-            guard let d = inputs[pos]?.device else { return [:] }
+            guard let d = (inputs[pos]?.device ?? inputs[.back]?.device) else { return [:] }
             return [
                 "maxZoom": Double(min(d.activeFormat.videoMaxZoomFactor, 8)),
                 "minEv": Double(d.minExposureTargetBias),
                 "maxEv": Double(d.maxExposureTargetBias),
-                "available": outputs[pos] != nil
+                "available": outputs[pos] != nil || outputs[.back] != nil
             ]
         }
     }
