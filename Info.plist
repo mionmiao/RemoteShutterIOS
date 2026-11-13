@@ -30,6 +30,13 @@
 	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!-- B 方案：打包前填好这三项，app 启动即自动连中继，无需局域网网页配置。留空则退回手动配置。 -->
+	<key>RSBootstrapURL</key>
+	<string></string>
+	<key>RSBootstrapToken</key>
+	<string></string>
+	<key>RSDeviceId</key>
+	<string>phone1</string>
 	<!-- 免费 Apple ID 侧载：只用 audio 后台模式。voip 需要 APNs VoIP 证书，免费账号拿不到。 -->
 	<key>UIBackgroundModes</key>
 	<array><string>audio</string></array>

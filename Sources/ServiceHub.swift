@@ -12,7 +12,8 @@ final class ServiceHub: ObservableObject {
     @Published var relayStatus = "未连接"
     @Published var address = ""
     @Published var blackout = false
-    @Published var backgroundAudio = UserDefaults.standard.bool(forKey: "rs.backgroundAudio")
+    /// 默认开启：靠 audio 会话在后台保住中继长连接与声音（相机画面仍会被系统中断）。
+    @Published var backgroundAudio = UserDefaults.standard.object(forKey: "rs.backgroundAudio") as? Bool ?? true
     @Published var cameraNote = ""
 
     // SwiftUI 的 Binding 赋值走 @Published.wrappedValue setter，不会触发属性 didSet。
@@ -24,6 +25,10 @@ final class ServiceHub: ObservableObject {
 
     /// 最近一次中继错误，供网页 /relay 状态展示。
     var relayLastError: String?
+    @Published var bootstrapState = "未配置"
+
+    private var bootstrapVersion = 0
+    private var lastBootstrapAt: TimeInterval = 0
 
     let camera = CameraService()
     let audio = AudioService()
@@ -56,13 +61,12 @@ final class ServiceHub: ObservableObject {
     func onForeground() {
         startIfNeeded()
         camera.resume()
-        audio.keepAlive = false
+        audio.keepAlive = backgroundAudio
     }
 
     func onBackground() {
         camera.suspend()
-        // 免费 Apple ID 没有 APNs VoIP 证书，voip/PushKit 保活不可用。
-        // 后台只靠 audio 会话，且默认关闭，避免主力机常年橙点 + 耗电。
+        // 免费 Apple ID 没有 APNs VoIP 证书，后台只靠 audio 会话保活；默认开启。
         audio.keepAlive = backgroundAudio
     }
 
@@ -85,10 +89,11 @@ final class ServiceHub: ObservableObject {
         watchdog = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self else { return }
             self.camera.checkFreeze()
+            self.bootstrap()          // 内部 30s 节流，服务端配置轮换后自动生效
             DispatchQueue.main.async { self.cameraNote = self.camera.note }
         }
-        // 用户点过「断开中继」后不应在下次启动又自动连上。
-        if relayEnabled { connectRelayIfConfigured(); buildRelayLink() }
+        // 启动即向内置固定服务器拉配置，不再需要先连局域网网页填表。
+        bootstrap(force: true)
     }
 
     func stop() {
@@ -140,7 +145,10 @@ final class ServiceHub: ObservableObject {
             "multiCam": multiCam,
             "multiCamSupported": AVCaptureMultiCamSession.isMultiCamSupported,
             "primary": primaryRaw,
-            "backgroundAudio": backgroundAudio
+            "backgroundAudio": backgroundAudio,
+            "bootstrap": bootstrapState,
+            "bootstrapEnabled": RSConfig.bootstrap != nil,
+            "watchPath": "/watch/\(deviceId)"
         ]
     }
 
@@ -148,9 +156,42 @@ final class ServiceHub: ObservableObject {
     func applySettings(_ p: [String: String]) -> [String: Any] {
         if let v = p["multiCam"] { setMultiCam(v == "1" || v == "true") }
         if let v = p["primary"], v == "back" || v == "front" { setPrimary(v) }
-        if let v = p["backgroundAudio"] { setBackgroundAudio(v == "1" || v == "true") }
         if p["restart"] == "1", started { camera.rebuild() }
         return statusSnapshot()
+    }
+
+    // MARK: - B 方案：自动 bootstrap（固定服务器 → 下发中继配置 → 自动连）
+
+    /// 启动时、每 30s、以及收到服务端 wake/cfg 帧时调用。
+    func bootstrap(force: Bool = false) {
+        let now = Date.timeIntervalSinceReferenceDate
+        if !force, now - lastBootstrapAt < 30 { return }
+        lastBootstrapAt = now
+        guard let cfg = RSConfig.bootstrap else {
+            bootstrapState = "未启用（用网页手动配置）"
+            if relayEnabled { connectRelayIfConfigured(); buildRelayLink() }
+            return
+        }
+        BootstrapClient.fetch(cfg: cfg) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(let r):
+                    let changed = (r.version != self.bootstrapVersion) ||
+                        (r.relayUrl != self.relayURL) || (r.agentKey != self.agentKey)
+                    self.bootstrapVersion = r.version
+                    self.bootstrapState = "已自动配置 v\(r.version)"
+                    if changed || !self.relayEnabled {
+                        self.saveRelay(url: r.relayUrl, id: r.deviceId, key: r.agentKey)
+                    }
+                    self.buildRelayLink()
+                case .failure(let e):
+                    self.bootstrapState = "自动配置失败：\(e.localizedDescription)"
+                    // 降级：沿用上一次保存的配置，不因服务器暂时不可达而中断
+                    if self.relayEnabled { self.connectRelayIfConfigured(); self.buildRelayLink() }
+                }
+            }
+        }
     }
 
     // MARK: - 中继（网页 /relay 协议，与 Android 版前端表单对齐）
@@ -163,6 +204,13 @@ final class ServiceHub: ObservableObject {
                 self?.relayStatus = state
                 if state == "在线" { self?.relayLastError = nil }
                 else if state.contains("注册被拒绝") { self?.relayLastError = state }
+            }
+        }
+        c.onControl = { [weak self] _, version in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                // 观看请求 / 配置变更：版本变了立刻重拉，否则走 30s 节流
+                self.bootstrap(force: version != self.bootstrapVersion)
             }
         }
         relay = c

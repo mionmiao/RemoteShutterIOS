@@ -11,6 +11,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # bootstrap 地址/令牌从 GitHub Secrets 注入，不写进公开仓库的 Info.plist。
+      # 仓库 Settings → Secrets and variables → Actions 添加：
+      #   RS_BOOTSTRAP_URL / RS_BOOTSTRAP_TOKEN / RS_DEVICE_ID(可选)
+      - name: Inject bootstrap config from secrets
+        env:
+          RS_BOOTSTRAP_URL: ${{ secrets.RS_BOOTSTRAP_URL }}
+          RS_BOOTSTRAP_TOKEN: ${{ secrets.RS_BOOTSTRAP_TOKEN }}
+          RS_DEVICE_ID: ${{ secrets.RS_DEVICE_ID }}
+        run: |
+          if [ -n "$RS_BOOTSTRAP_URL" ]; then
+            plutil -replace RSBootstrapURL -string "$RS_BOOTSTRAP_URL" Info.plist
+            plutil -replace RSBootstrapToken -string "$RS_BOOTSTRAP_TOKEN" Info.plist
+            if [ -n "$RS_DEVICE_ID" ]; then
+              plutil -replace RSDeviceId -string "$RS_DEVICE_ID" Info.plist
+            fi
+            echo "bootstrap config injected"
+          else
+            echo "no bootstrap secrets; manual config fallback"
+          fi
+
       - name: XcodeGen
         run: |
           brew install xcodegen

@@ -6,6 +6,8 @@ import Network
 /// 本地 HTTPServer 不输出 chunked，因此这里无需像 Android 端那样做双重分块解码。
 final class RelayClient {
     private let onState: (String) -> Void
+    /// 服务端推来的控制帧：(wake|cfg, configVersion)
+    var onControl: ((String, Int) -> Void)?
     private var rawURL = ""
     private var deviceId = ""
     private var agentKey = ""
@@ -98,6 +100,9 @@ final class RelayClient {
             openLocal(rid: UInt32(rid), raw: raw)
         case "close":
             if let rid = obj["rid"] as? Int { closeLocal(UInt32(rid)) }
+        case "wake", "cfg":
+            // 观看请求 / 配置变更：通知 ServiceHub 重新拉 bootstrap 配置
+            onControl?(t, (obj["version"] as? Int) ?? 0)
         default: break
         }
     }
@@ -113,6 +118,11 @@ final class RelayClient {
     private func sendText(_ obj: [String: Any]) {
         let s = String(decoding: RSUtil.json(obj), as: UTF8.self)
         task?.send(.string(s)) { _ in }
+    }
+
+    /// 上报设备状态，服务端 /watch 离线页与排障用（不对应转发请求）。
+    func sendState(camera: String, relay: String) {
+        sendText(["t": "state", "camera": camera, "relay": relay])
     }
 
     private func sendBinary(rid: UInt32, payload: Data) {
