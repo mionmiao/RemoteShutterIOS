@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AVFoundation
 
 /// 生命周期总控。主力机分时：
 /// - 前台：相机 + HTTP +（可选）中继全开，禁自动锁屏
@@ -11,7 +12,7 @@ final class ServiceHub: ObservableObject {
     @Published var relayStatus = "未连接"
     @Published var address = ""
     @Published var blackout = false
-    @Published var backgroundAudio = false
+    @Published var backgroundAudio = UserDefaults.standard.bool(forKey: "rs.backgroundAudio")
     @Published var cameraNote = ""
 
     // SwiftUI 的 Binding 赋值走 @Published.wrappedValue setter，不会触发属性 didSet。
@@ -117,6 +118,39 @@ final class ServiceHub: ObservableObject {
         // 前端每次点标签都会发请求；重复值不重建会话，避免来回抢摄像头。
         guard started, changed else { return }
         camera.rebuild()
+    }
+
+    // MARK: - 观看端控制接口（相机端界面已隐藏，全部配置走网页）
+
+    func setBackgroundAudio(_ on: Bool) {
+        backgroundAudio = on
+        UserDefaults.standard.set(on, forKey: "rs.backgroundAudio")
+        audio.keepAlive = on
+    }
+
+    func statusSnapshot() -> [String: Any] {
+        [
+            "ok": true,
+            "started": started,
+            "address": address,
+            "camera": cameraNote,
+            "relay": relayStatus,
+            "relayOnline": relayStatus == "在线",
+            "relayEnabled": relayEnabled,
+            "multiCam": multiCam,
+            "multiCamSupported": AVCaptureMultiCamSession.isMultiCamSupported,
+            "primary": primaryRaw,
+            "backgroundAudio": backgroundAudio
+        ]
+    }
+
+    /// /settings?<key>=<value>；返回最新状态快照供前端直接刷新。
+    func applySettings(_ p: [String: String]) -> [String: Any] {
+        if let v = p["multiCam"] { setMultiCam(v == "1" || v == "true") }
+        if let v = p["primary"], v == "back" || v == "front" { setPrimary(v) }
+        if let v = p["backgroundAudio"] { setBackgroundAudio(v == "1" || v == "true") }
+        if p["restart"] == "1", started { camera.rebuild() }
+        return statusSnapshot()
     }
 
     // MARK: - 中继（网页 /relay 协议，与 Android 版前端表单对齐）

@@ -47,7 +47,7 @@
   <h1>📷 远程快门 · iOS</h1>
   <div class="ios-note" id="iosNote">
     <div id="iosCamState">当前主摄：后置</div>
-    <div>单摄模式：点上方的「后置 / 前置」切换物理摄像头（约 1 秒重建会话）。屏幕镜像、录像、系统内录、远程点击在 iOS 版未实现。</div>
+    <div>相机端为纯黑屏，所有控制在本页。点「后置 / 前置」切换物理摄像头（约 1 秒重建会话）。屏幕镜像、录像、系统内录、远程点击在 iOS 版未实现。</div>
   </div>
 
   <div class="layout">
@@ -124,6 +124,17 @@
           <input id="relayLink" class="urlinput" readonly>
           <button class="mini" id="relayCopy">复制</button>
         </div>
+      </div>
+
+      <div class="card" id="deviceCard">
+        <div class="ctltitle">⚙️ 设备设置（相机端无界面，全部控制在此页）</div>
+        <div class="hint">相机端 app 打开后是纯黑屏；长按屏幕约 1 秒可临时查看本机地址与状态。首次启动会自动显示一次地址。</div>
+        <div class="row">
+          <button class="btn" id="setMulti">尝试双摄：关</button>
+          <button class="btn" id="setBgAudio">后台保音：关</button>
+          <button class="btn" id="setRestart">🔄 重启相机</button>
+        </div>
+        <div class="status" id="deviceStatus">读取中…</div>
       </div>
 
       <label class="hr"><input type="checkbox" id="hr"> 🖼️ 高分辨率拍照（原图，依赖相机支持）</label>
@@ -744,6 +755,43 @@
       setTimeout(() => { relayCopy.textContent = '复制'; }, 1500);
     });
     refreshRelay();
+
+    // 观看端控制相机端：设备 UI 已隐藏，这里通过 /status + /settings 读写全部开关
+    const setMulti = document.getElementById('setMulti');
+    const setBgAudio = document.getElementById('setBgAudio');
+    const setRestart = document.getElementById('setRestart');
+    const deviceStatus = document.getElementById('deviceStatus');
+    let devSnap = {};
+    function paintDevice(s) {
+      if (!s || !s.ok) return;
+      devSnap = s;
+      setMulti.textContent = '尝试双摄：' + (s.multiCam ? '开' : '关');
+      setMulti.classList.toggle('on', !!s.multiCam);
+      setBgAudio.textContent = '后台保音：' + (s.backgroundAudio ? '开' : '关');
+      setBgAudio.classList.toggle('on', !!s.backgroundAudio);
+      deviceStatus.textContent = '相机：' + (s.camera || '—') +
+        ' · 中继：' + (s.relay || '—') +
+        ' · 主摄：' + (s.primary === 'front' ? '前置' : '后置') +
+        (s.multiCamSupported === false ? ' · 本机不支持多摄' : '');
+      // 切换中的黄色提示优先，不被 3 秒轮询覆盖
+      if (s.primary && iosNote && !iosNote.classList.contains('busy')) {
+        setIosCamState('当前主摄：' + (s.primary === 'front' ? '前置' : '后置'), false);
+      }
+    }
+    async function refreshDevice() {
+      try { paintDevice(await fetch('/status').then(x => x.json())); } catch (e) { }
+    }
+    function sendSetting(q) {
+      return fetch('/settings?' + q).then(x => x.json()).then(paintDevice).catch(function () { });
+    }
+    setMulti.addEventListener('click', () => sendSetting('multiCam=' + (devSnap.multiCam ? '0' : '1')));
+    setBgAudio.addEventListener('click', () => sendSetting('backgroundAudio=' + (devSnap.backgroundAudio ? '0' : '1')));
+    setRestart.addEventListener('click', () => {
+      deviceStatus.textContent = '正在重启相机…';
+      sendSetting('restart=1');
+    });
+    refreshDevice();
+    setInterval(refreshDevice, 3000);
   </script>
 </body>
 </html>

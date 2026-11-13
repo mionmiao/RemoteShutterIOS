@@ -174,6 +174,14 @@ private final class Client {
             send(RSUtil.json(["ok": true, "cam": c]), type: "application/json")
         // 网页「公网访问」卡片沿用 Android 端 /relay 协议：?action=start|stop / 无参数取状态。
         case ("GET", "/relay"): relay(query: query)
+        case ("GET", "/status"):
+            send(RSUtil.json(ServiceHub.shared.statusSnapshot()), type: "application/json")
+        case ("GET", "/settings"):
+            var p: [String: String] = [:]
+            for k in ["multiCam", "primary", "backgroundAudio", "restart"] {
+                if let v = qs(query, k) { p[k] = v }
+            }
+            send(RSUtil.json(ServiceHub.shared.applySettings(p)), type: "application/json")
         // 「独立新标签页」按钮走 /cam/back | /cam/front，返回同一个 view.html。
         case ("GET", "/cam/back"), ("GET", "/cam/front"):
             let c = path.hasSuffix("front") ? "front" : "back"
