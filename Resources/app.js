@@ -306,7 +306,15 @@
                 node.connect(ctx.destination);
                 ctx.resume();
                 var proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
-                ws = new WebSocket(proto + location.host + path + '?rate=' + deliver);
+                // 公网观看时页面在 /d/<设备ID>/ 下：WS 也带设备前缀与观看密钥，
+                // 否则绝对路径 /audio 只能靠 Cookie 路由，中继容易 403 → 按钮无反应、没声音。
+                // 局域网直连（路径为 /）时保持原样，不影响本地使用。
+                var wsPath = path;
+                var dm = location.pathname.match(/^\/d\/([A-Za-z0-9_-]{1,64})\//);
+                if (dm) wsPath = '/d/' + dm[1] + path;
+                var viewK = new URLSearchParams(location.search).get('k');
+                var wsQuery = 'rate=' + deliver + (viewK ? '&k=' + encodeURIComponent(viewK) : '');
+                ws = new WebSocket(proto + location.host + wsPath + '?' + wsQuery);
                 ws.binaryType = 'arraybuffer';
                 ws.onopen = function () {
                     on = true; primed = false;

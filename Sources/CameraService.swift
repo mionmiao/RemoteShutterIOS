@@ -29,6 +29,7 @@ final class CameraService: NSObject, ObservableObject,
     private var wantRunning = false
     private var isMulti = false
     private var startedAt: TimeInterval = 0
+    private var multiCamStartedAt: TimeInterval = 0
     private var observers: [NSObjectProtocol] = []
 
     override init() { super.init() }
@@ -58,6 +59,11 @@ final class CameraService: NSObject, ObservableObject,
         let primary = Pos(rawValue: UserDefaults.standard.string(forKey: "rs.primary") ?? "back") ?? .back
         let useMulti = wantMulti && AVCaptureMultiCamSession.isMultiCamSupported
         isMulti = useMulti
+        if useMulti {
+            multiCamStartedAt = Date.timeIntervalSinceReferenceDate
+            // 单摄时两键都写过帧时间，切到双摄必须清掉，否则「双路都有帧」会误判。
+            lock.lock(); times.removeAll(); lock.unlock()
+        }
         let s: AVCaptureSession = useMulti ? AVCaptureMultiCamSession() : AVCaptureSession()
         s.beginConfiguration()
         if !useMulti, s.canSetSessionPreset(.medium) { s.sessionPreset = .medium }
@@ -149,13 +155,33 @@ final class CameraService: NSObject, ObservableObject,
         }
     }
 
-    /// 3.5s 无新帧则重建会话（照搬 Android 端看门狗）。
+    /// 3.5s 无新帧则重建会话；双摄会话若任一路始终不出帧，自动降级单摄。
     func checkFreeze() {
-        guard wantRunning, Date.timeIntervalSinceReferenceDate - startedAt > 5 else { return }
+        let now = Date.timeIntervalSinceReferenceDate
+        guard wantRunning, now - startedAt > 5 else { return }
+
+        if isMulti, now - multiCamStartedAt > 5 {
+            lock.lock()
+            let back = times[.back] ?? 0
+            let front = times[.front] ?? 0
+            lock.unlock()
+            if back == 0 || front == 0 || now - min(back, front) > 3.5 {
+                publish("双摄无画面，已自动降级单摄")
+                UserDefaults.standard.set(false, forKey: "rs.multiCam")
+                DispatchQueue.main.async { ServiceHub.shared.multiCam = false }
+                q.async {
+                    self.session?.stopRunning()
+                    self.startedAt = Date.timeIntervalSinceReferenceDate
+                    self.build(forceSingle: true)
+                }
+                return
+            }
+        }
+
         lock.lock()
         let newest = times.values.max() ?? 0
         lock.unlock()
-        guard newest > 0, Date.timeIntervalSinceReferenceDate - newest > 3.5 else { return }
+        guard newest > 0, now - newest > 3.5 else { return }
         q.async {
             self.session?.stopRunning()
             self.startedAt = Date.timeIntervalSinceReferenceDate

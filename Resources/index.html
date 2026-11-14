@@ -15,7 +15,14 @@
 
   /* 触屏适配：44px 最小点击区、防 iOS 自动缩放、安全区 */
   html { -webkit-text-size-adjust: 100%; }
-  body { font-size: 16px; padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+  /* 原主题的居中样式挂在 body.console 上，但本页 body 没有该 class → 整体居左。这里补齐。 */
+  body {
+    display: flex; flex-direction: column; align-items: center;
+    font-size: 16px; padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+  }
+  .layout { width: 100%; max-width: 900px; margin: 0 auto; }
+  .camcol { width: 100%; }
+  h1, .ios-note { text-align: center; }
   button, .btn, .mini, .newtab, .camtab, .cbtn {
     min-height: 44px; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
@@ -235,7 +242,8 @@
     const bothTab = document.querySelector('.camtab[data-cam="both"]');
     if (bothTab) {
       bothTab.textContent = '🔲 并排（同摄）';
-      bothTab.title = '单摄模式：两格显示同一个当前主摄';
+      bothTab.title = '两格显示同一个当前主摄（仅在尝试双摄开启时出现）';
+      bothTab.style.display = 'none';   // 默认单摄：隐藏，由 /status 状态决定显隐
     }
     const iosNote = document.getElementById('iosNote');
     const iosCamState = document.getElementById('iosCamState');
@@ -767,6 +775,15 @@
       devSnap = s;
       setMulti.textContent = '尝试双摄：' + (s.multiCam ? '开' : '关');
       setMulti.classList.toggle('on', !!s.multiCam);
+      if (bothTab) {
+        bothTab.style.display = s.multiCam ? '' : 'none';
+        if (!s.multiCam && selCam === 'both') {
+          selCam = 'back';
+          camTabs.forEach(x => x.classList.toggle('on', x.dataset.cam === 'back'));
+          updatePreviewVisibility();
+          fetch('/camera?cam=back', { method: 'POST' }).catch(function () { });
+        }
+      }
       deviceStatus.textContent = '相机：' + (s.camera || '—') +
         ' · 中继：' + (s.relay || '—') +
         ' · 主摄：' + (s.primary === 'front' ? '前置' : '后置') +
@@ -790,6 +807,11 @@
       deviceStatus.textContent = '正在重启相机…';
       sendSetting('restart=1');
     });
+    // 远程观看（经中继 /d/<id>/）时，公网访问配置卡片用不到，直接隐藏。
+    if (/^\/d\//.test(location.pathname)) {
+      const relayCard = document.getElementById('relayCard');
+      if (relayCard) relayCard.style.display = 'none';
+    }
     refreshDevice();
     setInterval(refreshDevice, 3000);
   </script>
