@@ -19,8 +19,9 @@ struct RootView: View {
                     Text("远程快门 · iOS").font(.headline)
                     Text(hub.address.isEmpty ? "服务启动中…" : hub.address)
                         .font(.system(.body, design: .monospaced))
-                    Text("相机：\(hub.cameraNote.isEmpty ? "—" : hub.cameraNote)")
+                    Text("自动配置：\(hub.bootstrapState)")
                     Text("中继：\(hub.relayStatus)")
+                    Text("相机：\(hub.cameraNote.isEmpty ? "—" : hub.cameraNote)")
                     Text("长按屏幕可再次查看 · 全部控制在网页端")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
