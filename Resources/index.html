@@ -345,6 +345,33 @@
     // 不等首帧就先摆正：之前只有 load 才 applyXform，首帧慢或失败时画面会停在右下 1/4。
     applyXform('back');
     applyXform('front');
+
+    // MJPEG 长流不会自己重连：页面打开时设备离线/相机中断，之后恢复了也一直黑。
+    // MJPEG 每帧都会触发 load，所以 6 秒没有新帧就重新拉一次流。
+    let pvLastFrame = Date.now();
+    let pvRetrying = false;
+    function previewURL(pos) {
+      const base = window.__rsBase || '';
+      const p = (pos === 'front') ? '/video/front' : '/video';
+      const k = window.__rsKey ? 'k=' + encodeURIComponent(window.__rsKey) + '&' : '';
+      return base + p + '?' + k + 't=' + Date.now();
+    }
+    function reconnectPreview() {
+      if (pvRetrying) return;
+      pvRetrying = true;
+      const pos = (selCam === 'front') ? 'front' : 'back';
+      const el = (pos === 'front') ? pvFront : pvBack;
+      el.src = previewURL(pos);
+      setTimeout(() => { pvRetrying = false; }, 4000);
+    }
+    pvBack.addEventListener('load', () => { pvLastFrame = Date.now(); });
+    pvFront.addEventListener('load', () => { pvLastFrame = Date.now(); });
+    pvBack.addEventListener('error', () => { pvLastFrame = 0; });
+    pvFront.addEventListener('error', () => { pvLastFrame = 0; });
+    setInterval(() => {
+      if (document.hidden) return;
+      if (Date.now() - pvLastFrame > 6000) reconnectPreview();
+    }, 3000);
     document.getElementById('mirrorBack').onclick = () => { camXform.back.mirror = !camXform.back.mirror; applyXform('back'); };
     document.getElementById('rotBack').onclick = () => { camXform.back.rot = (camXform.back.rot + 90) % 360; applyXform('back'); };
     document.getElementById('mirrorFront').onclick = () => { camXform.front.mirror = !camXform.front.mirror; applyXform('front'); };
@@ -850,7 +877,7 @@
         '?k=<VIEW_KEY>（收藏这一个，域名变化由服务端自动跳转）';
       // 相机被系统中断时优先提示：此时所有按钮点了都「没反应」，因为根本没有新帧。
       const broken = (s.camera || '').indexOf('中断') >= 0;
-      const stuck = !!iosCamState && (iosCamState.textContent || '').indexOf('中断') >= 0;
+      const stuck = !!iosCamState && /中断|连不上|离线/.test(iosCamState.textContent || '');
       if (broken) {
         setIosCamState('⚠️ 手机端相机被系统中断：把 app 切回前台，或点「恢复相机」', true);
       } else if (s.primary && (!iosNote || !iosNote.classList.contains('busy') || stuck)) {
@@ -859,7 +886,12 @@
       }
     }
     async function refreshDevice() {
-      try { paintDevice(await fetch('/status').then(x => x.json())); } catch (e) { }
+      try {
+        paintDevice(await fetch('/status').then(x => x.json()));
+      } catch (e) {
+        // 设备离线 / 中继 502 时把原因写在顶部，而不是让用户对着黑屏猜
+        setIosCamState('⚠️ 连不上手机端：设备可能离线，或中继已断开', true);
+      }
     }
     function sendSetting(q) {
       return fetch('/settings?' + q).then(x => x.json()).then(paintDevice).catch(function () { });
