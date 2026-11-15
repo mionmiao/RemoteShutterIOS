@@ -2,8 +2,21 @@
 <html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>远程快门</title>
-<link rel="stylesheet" href="/app.css?v=2">
-<script src="/app.js?v=4"></script>
+<script>
+(function () {
+  var m = location.pathname.match(/^\/d\/([A-Za-z0-9_-]{1,64})\//);
+  if (!m) { window.__rsBase = ''; return; }
+  var base = '/d/' + m[1];
+  window.__rsBase = base;
+  var raw = window.fetch;
+  window.fetch = function (u, o) {
+    if (typeof u === 'string' && u.charAt(0) === '/' && u.indexOf(base + '/') !== 0) u = base + u;
+    return raw.call(this, u, o);
+  };
+})();
+</script>
+<link rel="stylesheet" href="app.css?v=2">
+<script src="app.js?v=4"></script>
 <style id="ios-tweaks">
   /* iOS 版未实现录像，只隐藏不删除（脚本仍会取该元素） */
   #rec, .keybtn, #sysAudio { display: none !important; }
@@ -19,7 +32,7 @@
 </head>
 <body>
   <div class="bar"><span id="vtitle">📷 远程快门</span>
-    <button onclick="location.href='/'">← 返回控制台</button></div>
+    <button onclick="location.href='./'">← 返回控制台</button></div>
   <!-- 不写 src：镜像页的流地址由脚本启动时设置，空 src 会让部分浏览器重复请求当前页 -->
   <div class="stage"><img id="v" alt="" draggable="false"></div>
   <div class="status" id="status"></div>
@@ -131,7 +144,7 @@
       mirrorStream.start();
     } else {
       // 前置/后置摄像头：直接拉对应 MJPEG 预览流
-      img.src = isFront ? '/video/front' : '/video';
+      img.src = (window.__rsBase || '') + (isFront ? '/video/front' : '/video');
       const shutter = document.getElementById('shutter');
       const rec = document.getElementById('rec');
       let recording = false;

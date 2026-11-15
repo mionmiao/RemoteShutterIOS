@@ -4,9 +4,31 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>远程快门</title>
-<link rel="stylesheet" href="/app.css?v=2">
-<script src="/app.js?v=4"></script>
+<!-- 必须最先执行：标记公网观看模式（纯 CSS 隐藏用不到的卡片），
+     并把 fetch('/xxx') 改写成 /d/<id>/xxx —— 中继显式路径比依赖 Cookie 可靠得多。 -->
+<script>
+(function () {
+  var m = location.pathname.match(/^\/d\/([A-Za-z0-9_-]{1,64})\//);
+  if (!m) return;
+  document.documentElement.className += ' remote';
+  var base = '/d/' + m[1];
+  var raw = window.fetch;
+  window.fetch = function (u, o) {
+    if (typeof u === 'string' && u.charAt(0) === '/' && u.indexOf(base + '/') !== 0) u = base + u;
+    return raw.call(this, u, o);
+  };
+})();
+</script>
+<!-- 相对路径：局域网 / 下解析为 /app.css，公网 /d/<id>/ 下解析为 /d/<id>/app.css。 -->
+<link rel="stylesheet" href="app.css?v=2">
+<script src="app.js?v=4"></script>
 <style id="ios-tweaks">
+  /* 公网观看（/d/<id>/）用不到中继配置卡片，纯 CSS 隐藏，不依赖脚本执行成功 */
+  html.remote #relayCard { display: none !important; }
+  /* 兜底：app.css 把 img 放在 left/top:50%，靠 JS 的 translate(-50%,-50%) 回正。
+     脚本一旦加载失败，画面就会只显示在右下 1/4。这里用 CSS 先回正，
+     JS 的 applyXform 会用内联样式覆盖它，不影响镜像/旋转/缩放。 */
+  .pvcell img { transform: translate(-50%, -50%); }
   /* iOS 版：隐藏未实现的 Android 入口。只隐藏 DOM，不删除，避免共享脚本取不到元素。 */
   #recBtn, #dualRecBtn, #pipBtn, #screenBtn, #screenMirrorBtn, #sysAudioBtn,
   #allOffBtn, #allOnBtn, #openMirror, #enBack, #enFront,
@@ -69,8 +91,8 @@
       </div>
 
       <div class="preview single" id="previewWrap">
-        <div class="pvcell" id="cellBack"><img id="pvBack" src="/video" alt="后置预览"></div>
-        <div class="pvcell" id="cellFront" style="display:none"><img id="pvFront" src="/video/front" alt="前置预览"></div>
+        <div class="pvcell" id="cellBack"><img id="pvBack" src="video" alt="后置预览"></div>
+        <div class="pvcell" id="cellFront" style="display:none"><img id="pvFront" src="video/front" alt="前置预览"></div>
       </div>
 
       <div class="mirrow">
@@ -304,6 +326,9 @@
     }
     pvBack.addEventListener('load', () => onFrameLoaded('back'));
     pvFront.addEventListener('load', () => onFrameLoaded('front'));
+    // 不等首帧就先摆正：之前只有 load 才 applyXform，首帧慢或失败时画面会停在右下 1/4。
+    applyXform('back');
+    applyXform('front');
     document.getElementById('mirrorBack').onclick = () => { camXform.back.mirror = !camXform.back.mirror; applyXform('back'); };
     document.getElementById('rotBack').onclick = () => { camXform.back.rot = (camXform.back.rot + 90) % 360; applyXform('back'); };
     document.getElementById('mirrorFront').onclick = () => { camXform.front.mirror = !camXform.front.mirror; applyXform('front'); };
@@ -527,6 +552,27 @@
     // 公网经中继观看时默认 16kHz：48k 裸 PCM 要 96KB/s，和 MJPEG 抢上行；
     // 局域网直连保持 48kHz 清晰档。用户仍可点音质按钮切 8k / 48k。
     if (/^\/d\//.test(location.pathname)) micAudio.setRate(16000);
+
+    // 声音默认开启。浏览器要求用户手势后才允许播放：先直接尝试一次，
+    // 被自动播放策略拦下时，等首次触摸再补开（只补一次，避免误触把声音关掉）。
+    (function autoSound() {
+      const btn = document.getElementById('audioBtn');
+      if (!btn) return;
+      let pending = false;
+      const start = () => {
+        if (pending || micAudio.isOn()) return;
+        pending = true;
+        btn.click();
+        setTimeout(() => { pending = false; }, 1500);
+      };
+      start();
+      setTimeout(start, 350);
+      const once = () => {
+        document.removeEventListener('pointerdown', once, true);
+        setTimeout(start, 60);
+      };
+      document.addEventListener('pointerdown', once, true);
+    })();
 
     // 录像（所选摄像头）
     let recording = false;
@@ -808,9 +854,10 @@
     function sendSetting(q) {
       return fetch('/settings?' + q).then(x => x.json()).then(paintDevice).catch(function () { });
     }
-    setMulti.addEventListener('click', () => sendSetting('multiCam=' + (devSnap.multiCam ? '0' : '1')));
-    setRestart.addEventListener('click', () => {
-      deviceStatus.textContent = '正在重启相机…';
+    // 防御式绑定：任一元素缺失不应该让整块脚本中断（否则后面的隐藏/轮询/入口全失效）
+    if (setMulti) setMulti.addEventListener('click', () => sendSetting('multiCam=' + (devSnap.multiCam ? '0' : '1')));
+    if (setRestart) setRestart.addEventListener('click', () => {
+      if (deviceStatus) deviceStatus.textContent = '正在重启相机…';
       sendSetting('restart=1');
     });
     // 远程观看（经中继 /d/<id>/）时，公网访问配置卡片用不到，直接隐藏。
