@@ -75,6 +75,11 @@ final class ServiceHub: ObservableObject {
         started = true
         camera.start()
         audio.start()
+        // H.264 通道路由到 HTTP 层，再由它广播给所有 /h264 观看端。
+        camera.onH264Config = { [weak self] cfg in self?.http.broadcastH264Config(cfg) }
+        camera.onH264Frame = { [weak self] data, key, pts in
+            self?.http.broadcastH264(data, key: key, pts: pts)
+        }
         audio.onPCM = { [weak self] pcm in
             guard let self else { return }
             self.http.broadcastPCM(pcm, sourceRate: self.audio.actualSampleRate)

@@ -63,6 +63,28 @@ final class HTTPServer {
         }
     }
 
+    // MARK: - H.264（WebCodecs 解码）
+
+    private let cfgLock = NSLock()
+    private var h264Cfg: Data?
+
+    /// 最新 avcC，供新接入的 /h264 客户端立即初始化解码器。
+    var h264Config: Data? {
+        cfgLock.lock(); defer { cfgLock.unlock() }
+        return h264Cfg
+    }
+
+    func broadcastH264Config(_ cfg: Data) {
+        cfgLock.lock(); h264Cfg = cfg; cfgLock.unlock()
+        lock.lock(); let all = Array(clients.values); lock.unlock()
+        for c in all where c.h264 { c.sendH264Config(cfg) }
+    }
+
+    func broadcastH264(_ data: Data, key: Bool, pts: Int64) {
+        lock.lock(); let all = Array(clients.values); lock.unlock()
+        for c in all where c.h264 { c.sendH264Frame(data, key: key, pts: pts) }
+    }
+
     /// 音频帧按采集节奏逐个推给每个 /audio 客户端，并各自重采样到浏览器 AudioContext 的采样率。
     func broadcastPCM(_ pcm: Data, sourceRate: Double) {
         lock.lock(); let all = Array(clients.values); lock.unlock()
@@ -126,6 +148,12 @@ private final class Client {
     fileprivate var stream: CameraService.Pos?
     fileprivate var audio = false
     fileprivate var audioRate: Double = 48_000
+    /// H.264 不能丢帧（丢参考帧会连续花屏），所以这里用「不丢帧 + 有界队列」：
+    /// 客户端慢到积压 30 帧（约 3.7 秒 @8fps）说明链路撑不住，直接断开让它重连。
+    fileprivate var h264 = false
+    private var h264Queue: [(Data, Bool, Int64)] = []
+    private var h264InFlight = false
+    private var h264ConfigSent = false
 
     /// 原子地占用一个发送时隙：未到间隔、或上一帧还没写完就跳过（丢帧保实时，不排队）。
     func claimFrameSlot(at now: TimeInterval) -> Bool {
@@ -213,6 +241,8 @@ private final class Client {
         case ("GET", "/cam/mirror"): unsupported()
         case ("GET", "/video"): startMJPEG(.back, query: query)
         case ("GET", "/video/front"): startMJPEG(.front, query: query)
+        case ("GET", "/h264.html"): serveStatic("h264.html")
+        case ("GET", "/h264"): startH264(query: query)
         case ("GET", "/audio"): startAudioWS(key: headers["sec-websocket-key"] ?? "", query: query)
         case ("GET", "/audio/quality"): startAudioQuality(query: query)
         case ("POST", "/capture"): capture(query: query)
@@ -273,6 +303,23 @@ private final class Client {
         })
     }
 
+    /// H.264 原始流：先发 `RSH1 + len + avcC`，之后每帧 `[1B flags][4B pts][4B len][AVCC]`。
+    /// 全在 body 里，不依赖自定义响应头，中继透传即可。
+    private func startH264(query: String) {
+        if let raw = qs(query, "fps"), let v = Double(raw), v >= 1, v <= 30 {
+            ServiceHub.shared.camera.setH264FPS(v)
+        }
+        let h = "HTTP/1.1 200 OK\r\n" +
+                "Content-Type: application/octet-stream\r\n" +
+                "Cache-Control: no-store, no-cache, no-transform\r\n" +
+                "X-Accel-Buffering: no\r\nConnection: close\r\n\r\n"
+        conn.send(content: Data(h.utf8), completion: .contentProcessed { [weak self] err in
+            if err != nil { self?.forceClose() }
+        })
+        h264 = true
+        if let cfg = server?.h264Config { sendH264Config(cfg) }
+    }
+
     /// 前端音质档位按钮会请求这个路径。下发率由随后重建的 /audio?rate= 决定，
     /// 这里只回执，避免 501 噪音；真正的降带宽在 resamplePCM。
     private func startAudioQuality(query: String) {
@@ -296,6 +343,59 @@ private final class Client {
         if let r = Double(qs(query, "rate") ?? ""), r >= 8_000, r <= 96_000 {
             audioRate = r
         }
+    }
+
+    func sendH264Config(_ cfg: Data) {
+        ioLock.lock()
+        guard h264, !h264ConfigSent else { ioLock.unlock(); return }
+        h264ConfigSent = true
+        ioLock.unlock()
+
+        var d = Data("RSH1".utf8)
+        let n = cfg.count
+        d.append(UInt8((n >> 24) & 0xff)); d.append(UInt8((n >> 16) & 0xff))
+        d.append(UInt8((n >> 8) & 0xff));  d.append(UInt8(n & 0xff))
+        d.append(cfg)
+        conn.send(content: d, completion: .contentProcessed { [weak self] err in
+            if err != nil { self?.forceClose() }
+        })
+    }
+
+    func sendH264Frame(_ data: Data, key: Bool, pts: Int64) {
+        ioLock.lock()
+        guard h264, h264ConfigSent else { ioLock.unlock(); return }
+        if h264Queue.count > 30 { ioLock.unlock(); forceClose(); return }
+        h264Queue.append((data, key, pts))
+        let start = !h264InFlight
+        if start { h264InFlight = true }
+        ioLock.unlock()
+        if start { pumpH264() }
+    }
+
+    private func pumpH264() {
+        ioLock.lock()
+        guard h264, !h264Queue.isEmpty else {
+            h264InFlight = false
+            ioLock.unlock()
+            return
+        }
+        let f = h264Queue.removeFirst()
+        ioLock.unlock()
+
+        var pkt = Data(capacity: 9 + f.0.count)
+        pkt.append(f.1 ? 1 : 0)
+        pkt.append(UInt8((f.2 >> 24) & 0xff)); pkt.append(UInt8((f.2 >> 16) & 0xff))
+        pkt.append(UInt8((f.2 >> 8) & 0xff));  pkt.append(UInt8(f.2 & 0xff))
+        let n = f.0.count
+        pkt.append(UInt8((n >> 24) & 0xff)); pkt.append(UInt8((n >> 16) & 0xff))
+        pkt.append(UInt8((n >> 8) & 0xff));  pkt.append(UInt8(n & 0xff))
+        pkt.append(f.0)
+
+        conn.send(content: pkt, completion: .contentProcessed { [weak self] err in
+            guard let self else { return }
+            if err != nil { self.forceClose(); return }
+            self.pumpH264()
+        })
     }
 
     func sendWS(_ payload: Data) {

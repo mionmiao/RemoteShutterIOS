@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>H.264 直播 · RemoteShutter</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #000; }
+  body {
+    display: flex; align-items: center; justify-content: center;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", system-ui, sans-serif;
+    color: #e8e8e8; overflow: hidden;
+  }
+  #c { max-width: 100vw; max-height: 100vh; width: auto; height: auto; display: block; }
+  #tip {
+    position: fixed; left: 50%; top: 12px; transform: translateX(-50%);
+    max-width: calc(100vw - 24px); padding: 6px 12px; border-radius: 999px;
+    background: rgba(0,0,0,.62); color: #ddd; font-size: 13px; line-height: 1.4;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    transition: opacity .3s; pointer-events: none;
+  }
+  #tip.hide { opacity: 0; }
+  #back {
+    position: fixed; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom));
+    padding: 8px 14px; min-height: 40px; border-radius: 10px; border: 1px solid #333;
+    background: rgba(28,28,30,.86); color: #ddd; font-size: 14px;
+    text-decoration: none; display: inline-flex; align-items: center;
+  }
+</style>
+</head>
+<body>
+<canvas id="c" width="640" height="480"></canvas>
+<div id="tip">连接中…</div>
+<a id="back" href="./">返回控制页</a>
+
+<script>
+(function () {
+  'use strict';
+  var cv = document.getElementById('c');
+  var ctx = cv.getContext('2d', { alpha: false, desynchronized: true });
+  var tip = document.getElementById('tip');
+  var back = document.getElementById('back');
+
+  function say(t, keep) {
+    tip.textContent = t;
+    tip.classList.remove('hide');
+    if (!keep) {
+      clearTimeout(say._t);
+      say._t = setTimeout(function () { tip.classList.add('hide'); }, 2600);
+    }
+  }
+
+  // 在 /d/<设备ID>/ 下访问时，所有请求都要带设备前缀与观看密钥
+  var dm = location.pathname.match(/^\/d\/([A-Za-z0-9_-]{1,64})\//);
+  var prefix = dm ? '/d/' + dm[1] : '';
+  var viewK = new URLSearchParams(location.search).get('k');
+  if (dm) back.href = prefix + '/' + (viewK ? '?k=' + encodeURIComponent(viewK) : '');
+
+  if (!('VideoDecoder' in window)) {
+    say('此浏览器不支持 WebCodecs（需 Safari 16.4+ / Chrome 94+），请返回用 MJPEG 模式', true);
+    return;
+  }
+
+  var decoder = null, firstTs = null, buf = new Uint8Array(0), cfgLen = 0;
+  var running = true;
+
+  function concat(a, b) {
+    var r = new Uint8Array(a.length + b.length);
+    r.set(a, 0); r.set(b, a.length);
+    return r;
+  }
+  function u32(a, o) {
+    return ((a[o] << 24) >>> 0) + (a[o + 1] << 16) + (a[o + 2] << 8) + a[o + 3];
+  }
+
+  function onFrame(frame) {
+    if (cv.width !== frame.displayWidth || cv.height !== frame.displayHeight) {
+      cv.width = frame.displayWidth;
+      cv.height = frame.displayHeight;
+    }
+    ctx.drawImage(frame, 0, 0, cv.width, cv.height);
+    frame.close();
+  }
+
+  function onDecodeError(e) {
+    say('解码错误：' + (e && e.message ? e.message : e), true);
+  }
+
+  function setupDecoder(avcC) {
+    var codec = 'avc1.' + [avcC[1], avcC[2], avcC[3]]
+      .map(function (x) { return ('0' + x.toString(16)).slice(-2); }).join('');
+    decoder = new VideoDecoder({ output: onFrame, error: onDecodeError });
+    decoder.configure({ codec: codec, description: avcC, optimizeForLatency: true });
+    say('直播中 · ' + codec, true);
+  }
+
+  // 解析累积缓冲：先 RSH1 配置，再逐帧 [flags][pts][len][data]
+  function parse() {
+    while (running) {
+      if (!decoder) {
+        if (buf.length < 8) return;
+        if (String.fromCharCode(buf[0], buf[1], buf[2], buf[3]) !== 'RSH1') {
+          say('流格式错误（不是 RSH1）', true); running = false; return;
+        }
+        cfgLen = u32(buf, 4);
+        if (buf.length < 8 + cfgLen) return;
+        var avcC = buf.slice(8, 8 + cfgLen);
+        buf = buf.slice(8 + cfgLen);
+        setupDecoder(avcC);
+        continue;
+      }
+      if (buf.length < 9) return;
+      var flags = buf[0], pts = u32(buf, 1), len = u32(buf, 5);
+      if (buf.length < 9 + len) return;
+      var data = buf.slice(9, 9 + len);
+      buf = buf.slice(9 + len);
+      if (firstTs === null) firstTs = pts;
+      try {
+        decoder.decode(new EncodedVideoChunk({
+          type: (flags & 1) ? 'key' : 'delta',
+          timestamp: Math.max(0, pts - firstTs) * 1000,
+          data: data
+        }));
+      } catch (e) {
+        // 解码器还没 ready 时丢弃这一帧；下个关键帧（≤2 秒）会自动恢复
+      }
+    }
+  }
+
+  async function pump() {
+    var url = prefix + '/h264?fps=8' + (viewK ? '&k=' + encodeURIComponent(viewK) : '');
+    say('连接中…', true);
+    var res;
+    try {
+      res = await fetch(url, { cache: 'no-store' });
+    } catch (e) {
+      say('连接失败：' + e.message, true);
+      return retry();
+    }
+    if (!res.ok || !res.body) {
+      say('连接失败：HTTP ' + res.status, true);
+      return retry();
+    }
+    var reader = res.body.getReader();
+    while (running) {
+      var r;
+      try { r = await reader.read(); } catch (e) { break; }
+      if (r.done) break;
+      buf = concat(buf, r.value);
+      parse();
+      // 解码积压时暂停读流，让 TCP 反压回手机端，避免越积越久
+      if (decoder && decoder.decodeQueueSize > 8) {
+        await new Promise(function (ok) { setTimeout(ok, 25); });
+      }
+    }
+    say('流已断开，1 秒后重连…', true);
+    retry();
+  }
+
+  function retry() {
+    if (!running) return;
+    buf = new Uint8Array(0);
+    firstTs = null;
+    if (decoder) {
+      try { decoder.close(); } catch (e) { }
+      decoder = null;
+    }
+    setTimeout(pump, 1000);
+  }
+
+  pump();
+})();
+</script>
+</body>
+</html>

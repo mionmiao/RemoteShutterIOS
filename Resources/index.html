@@ -55,6 +55,9 @@
   <div class="ios-note" id="iosNote">
     <div id="iosCamState">当前主摄：后置</div>
     <div>相机端为纯黑屏，所有控制在本页。点「后置 / 前置」切换物理摄像头（约 1 秒重建会话）。屏幕镜像、录像、系统内录、远程点击在 iOS 版未实现。</div>
+    <div style="margin-top:8px">
+      <button class="mini" id="h264Btn" style="min-height:36px;padding:0 14px">🎬 H.264 省流模式（低带宽，需 Safari 16.4+）</button>
+    </div>
   </div>
 
   <div class="layout">
@@ -817,6 +820,18 @@
     }
     refreshDevice();
     setInterval(refreshDevice, 3000);
+
+    // H.264 低带宽直播（WebCodecs 解码）：独立页面，MJPEG 主链路不受影响。
+    (function () {
+      const b = document.getElementById('h264Btn');
+      if (!b) return;
+      const dm = location.pathname.match(/^\/d\/([A-Za-z0-9_-]{1,64})\//);
+      const k = new URLSearchParams(location.search).get('k');
+      b.addEventListener('click', () => {
+        const p = (dm ? '/d/' + dm[1] : '') + '/h264.html' + (k ? '?k=' + encodeURIComponent(k) : '');
+        window.open(p, '_blank');
+      });
+    })();
   </script>
 </body>
 </html>

@@ -32,6 +32,15 @@ final class CameraService: NSObject, ObservableObject,
     private var multiCamStartedAt: TimeInterval = 0
     private var observers: [NSObjectProtocol] = []
 
+    /// H.264 编码：只编主摄，按目标 fps 节流。全局一个编码器，尺寸变化时重建。
+    private var h264: H264Encoder?
+    private var h264FPS: Double = 8
+    private var lastEncodeAt: TimeInterval = 0
+    private var primaryPos: Pos = .back
+    /// avcC 配置（SPS/PPS），供 /h264 观看端在首帧前初始化解码器。
+    var onH264Config: ((Data) -> Void)?
+    var onH264Frame: ((Data, Bool, Int64) -> Void)?
+
     override init() { super.init() }
 
     func start() {
@@ -48,6 +57,12 @@ final class CameraService: NSObject, ObservableObject,
         inputs.removeAll()
         outputs.removeAll()
         photoOutput = nil
+        // 会话重建后 pixel buffer 尺寸/内容都变了，旧编码器的参考帧失效，必须重来。
+        lock.lock()
+        h264?.invalidate()
+        h264 = nil
+        lastEncodeAt = 0
+        lock.unlock()
         // 保留最后一帧：切换主摄时 MJPEG 连接不断、画面不黑，新会话首帧到达后自然覆盖。
     }
 
@@ -57,6 +72,7 @@ final class CameraService: NSObject, ObservableObject,
         resetForRebuild()
         let wantMulti = !forceSingle && UserDefaults.standard.bool(forKey: "rs.multiCam")
         let primary = Pos(rawValue: UserDefaults.standard.string(forKey: "rs.primary") ?? "back") ?? .back
+        primaryPos = primary
         let useMulti = wantMulti && AVCaptureMultiCamSession.isMultiCamSupported
         isMulti = useMulti
         if useMulti {
@@ -295,6 +311,45 @@ final class CameraService: NSObject, ObservableObject,
             times[.back] = now;  times[.front] = now
         }
         lock.unlock()
+
+        // H.264 只编主摄：双摄时两路都编会白烧算力，而观看端同一时刻只看一路。
+        if pos == primaryPos { encodeH264(pb) }
+    }
+
+    /// 观看端 /h264?fps= 指定的目标帧率；编码器本身按输入帧编码，节流放在这里。
+    func setH264FPS(_ f: Double) {
+        lock.lock()
+        h264FPS = max(1, min(30, f))
+        lock.unlock()
+    }
+
+    /// 中途接入的观看端需要立即拿到 avcC；没有就等首帧由编码器回调补发。
+    var h264Config: Data? {
+        lock.lock(); defer { lock.unlock() }
+        return h264?.config
+    }
+
+    private func encodeH264(_ pb: CVPixelBuffer) {
+        lock.lock(); let fps = h264FPS; lock.unlock()
+        let now = Date.timeIntervalSinceReferenceDate
+        guard now - lastEncodeAt >= 1.0 / max(1, fps) else { return }
+        lastEncodeAt = now
+
+        let w = CVPixelBufferGetWidth(pb)
+        let h = CVPixelBufferGetHeight(pb)
+        lock.lock()
+        if let e = h264, e.width != w || e.height != h {
+            e.invalidate()
+            h264 = nil
+        }
+        if h264 == nil, let e = H264Encoder(width: w, height: h, fps: Int(fps)) {
+            e.onConfig = { [weak self] cfg in self?.onH264Config?(cfg) }
+            e.onFrame = { [weak self] data, key, pts in self?.onH264Frame?(data, key, pts) }
+            h264 = e
+        }
+        let enc = h264
+        lock.unlock()
+        enc?.encode(pb, ms: Int64(now * 1000))
     }
 
     private func publish(_ s: String) {
