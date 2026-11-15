@@ -332,7 +332,8 @@
                     on = true; primed = false;
                     btn.textContent = liveText;
                     btn.classList.add('on');
-                    onStatus((labels.open || '声音已开启') + '（' + srcRate / 1000 + 'kHz / 播放 ' + playRate / 1000 + 'kHz）');
+                    var suspended = (ctx && ctx.state === 'suspended') ? ' · 点一下页面开始播放' : '';
+                    onStatus((labels.open || '声音已开启') + '（' + srcRate / 1000 + 'kHz / 播放 ' + playRate / 1000 + 'kHz）' + suspended);
                 };
                 ws.onmessage = function (ev) {
                     var arr = new Uint8Array(ev.data);
@@ -368,7 +369,19 @@
         }
 
         btn.addEventListener('click', function () { if (on) disable(); else enable(); });
-        return { stop: disable, isOn: function () { return on; }, setRate: setRate };
+
+        /** 直接开启（不是模拟点击）：页面默认开声音时调用。 */
+        function start() { if (!on) enable(); }
+        /** 自动播放策略会把 AudioContext 挂起；必须在用户手势的调用栈里 resume 才会出声。 */
+        function resume() {
+            if (ctx && ctx.state === 'suspended') {
+                try { ctx.resume(); } catch (e) { }
+            }
+        }
+        return {
+            stop: disable, isOn: function () { return on; },
+            setRate: setRate, start: start, resume: resume
+        };
     }
 
     /** 屏幕镜像的系统媒体声（内部复用 bindAudioStream） */

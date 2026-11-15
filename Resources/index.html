@@ -4,24 +4,33 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>远程快门</title>
-<!-- 必须最先执行：标记公网观看模式（纯 CSS 隐藏用不到的卡片），
-     并把 fetch('/xxx') 改写成 /d/<id>/xxx —— 中继显式路径比依赖 Cookie 可靠得多。 -->
+<!-- 必须最先执行：公网经中继时，中继对 /d/<id>/ 下的资源要求显式凭据。
+     只靠 Cookie，quick tunnel 换域名后首次进入会 403 → 整页裸奔（无样式、脚本不执行）。
+     这里把 css/js/接口/画面全部带上 ?k=，不再依赖 Cookie。 -->
 <script>
 (function () {
   var m = location.pathname.match(/^\/d\/([A-Za-z0-9_-]{1,64})\//);
-  if (!m) return;
-  document.documentElement.className += ' remote';
-  var base = '/d/' + m[1];
+  var k = new URLSearchParams(location.search).get('k');
+  var base = m ? '/d/' + m[1] : '';
+  var ek = k ? 'k=' + encodeURIComponent(k) : '';
+  window.__rsBase = base;
+  window.__rsKey = k;
+  if (m) document.documentElement.className += ' remote';
+
+  // 同步注入：document.write 在解析阶段执行，能保证 app.js 先于后面的内联脚本加载
+  document.write('<link rel="stylesheet" href="' + base + '/app.css?v=2' + (ek ? '?' + ek : '') + '">');
+  document.write('<script src="' + base + '/app.js?v=5' + (ek ? '?' + ek : '') + '"><\/script>');
+
   var raw = window.fetch;
   window.fetch = function (u, o) {
-    if (typeof u === 'string' && u.charAt(0) === '/' && u.indexOf(base + '/') !== 0) u = base + u;
+    if (typeof u === 'string' && u.charAt(0) === '/') {
+      if (u.indexOf(base + '/') !== 0) u = base + u;
+      if (ek && u.indexOf('k=') < 0) u += (u.indexOf('?') < 0 ? '?' : '&') + ek;
+    }
     return raw.call(this, u, o);
   };
 })();
 </script>
-<!-- 相对路径：局域网 / 下解析为 /app.css，公网 /d/<id>/ 下解析为 /d/<id>/app.css。 -->
-<link rel="stylesheet" href="app.css?v=2">
-<script src="app.js?v=4"></script>
 <style id="ios-tweaks">
   /* 公网观看（/d/<id>/）用不到中继配置卡片，纯 CSS 隐藏，不依赖脚本执行成功 */
   html.remote #relayCard { display: none !important; }
@@ -263,6 +272,12 @@
     const cellBack = document.getElementById('cellBack');
     const cellFront = document.getElementById('cellFront');
     const previewWrap = document.getElementById('previewWrap');
+    // 公网：画面流也要带 ?k=，否则首次进入 Cookie 还没到手时会拿到 403 空框
+    if (window.__rsBase) {
+      const ek = window.__rsKey ? '?k=' + encodeURIComponent(window.__rsKey) : '';
+      pvBack.src = window.__rsBase + '/video' + ek;
+      pvFront.src = window.__rsBase + '/video/front' + ek;
+    }
     const camTabs = document.querySelectorAll('.camtab');
     const bothTab = document.querySelector('.camtab[data-cam="both"]');
     if (bothTab) {
@@ -553,26 +568,15 @@
     // 局域网直连保持 48kHz 清晰档。用户仍可点音质按钮切 8k / 48k。
     if (/^\/d\//.test(location.pathname)) micAudio.setRate(16000);
 
-    // 声音默认开启。浏览器要求用户手势后才允许播放：先直接尝试一次，
-    // 被自动播放策略拦下时，等首次触摸再补开（只补一次，避免误触把声音关掉）。
-    (function autoSound() {
-      const btn = document.getElementById('audioBtn');
-      if (!btn) return;
-      let pending = false;
-      const start = () => {
-        if (pending || micAudio.isOn()) return;
-        pending = true;
-        btn.click();
-        setTimeout(() => { pending = false; }, 1500);
-      };
-      start();
-      setTimeout(start, 350);
-      const once = () => {
-        document.removeEventListener('pointerdown', once, true);
-        setTimeout(start, 60);
-      };
-      document.addEventListener('pointerdown', once, true);
-    })();
+    // 声音默认开启：直接调音频模块的 start()，不是模拟点击。
+    // 浏览器自动播放策略会先把 AudioContext 挂起（按钮会变绿但没声音），
+    // 所以第一次触摸页面时在手势调用栈里 resume 一次 —— Safari 只认这种方式。
+    micAudio.start();
+    document.addEventListener('pointerdown', function wakeAudio() {
+      document.removeEventListener('pointerdown', wakeAudio, true);
+      micAudio.resume();
+      micAudio.start();
+    }, true);
 
     // 录像（所选摄像头）
     let recording = false;

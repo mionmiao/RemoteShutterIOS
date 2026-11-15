@@ -5,18 +5,23 @@
 <script>
 (function () {
   var m = location.pathname.match(/^\/d\/([A-Za-z0-9_-]{1,64})\//);
-  if (!m) { window.__rsBase = ''; return; }
-  var base = '/d/' + m[1];
+  var k = new URLSearchParams(location.search).get('k');
+  var base = m ? '/d/' + m[1] : '';
+  var ek = k ? 'k=' + encodeURIComponent(k) : '';
   window.__rsBase = base;
+  window.__rsKey = k;
+  document.write('<link rel="stylesheet" href="' + base + '/app.css?v=2' + (ek ? '?' + ek : '') + '">');
+  document.write('<script src="' + base + '/app.js?v=5' + (ek ? '?' + ek : '') + '"><\/script>');
   var raw = window.fetch;
   window.fetch = function (u, o) {
-    if (typeof u === 'string' && u.charAt(0) === '/' && u.indexOf(base + '/') !== 0) u = base + u;
+    if (typeof u === 'string' && u.charAt(0) === '/') {
+      if (u.indexOf(base + '/') !== 0) u = base + u;
+      if (ek && u.indexOf('k=') < 0) u += (u.indexOf('?') < 0 ? '?' : '&') + ek;
+    }
     return raw.call(this, u, o);
   };
 })();
 </script>
-<link rel="stylesheet" href="app.css?v=2">
-<script src="app.js?v=4"></script>
 <style id="ios-tweaks">
   /* iOS 版未实现录像，只隐藏不删除（脚本仍会取该元素） */
   #rec, .keybtn, #sysAudio { display: none !important; }
@@ -144,7 +149,8 @@
       mirrorStream.start();
     } else {
       // 前置/后置摄像头：直接拉对应 MJPEG 预览流
-      img.src = (window.__rsBase || '') + (isFront ? '/video/front' : '/video');
+      img.src = (window.__rsBase || '') + (isFront ? '/video/front' : '/video') +
+        (window.__rsKey ? '?k=' + encodeURIComponent(window.__rsKey) : '');
       const shutter = document.getElementById('shutter');
       const rec = document.getElementById('rec');
       let recording = false;
