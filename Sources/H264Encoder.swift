@@ -115,9 +115,10 @@ final class H264Encoder {
 
     // MARK: - 回调处理
 
-    fileprivate func handle(_ sb: CMSampleBuffer, key: Bool) {
+    fileprivate func handle(_ sb: CMSampleBuffer) {
         guard let fmt = CMSampleBufferGetFormatDescription(sb) else { return }
         if !sentConfig { publishConfig(fmt) }
+        let key = isSyncFrame(sb)
         guard let bb = CMSampleBufferGetDataBuffer(sb) else { return }
         var total = 0
         var ptr: UnsafeMutablePointer<Int8>?
@@ -144,6 +145,19 @@ final class H264Encoder {
         onConfig?(c)
     }
 
+    /// 关键帧判断：`VTEncodeInfoFlags` 里没有这个信息，要看 sample 附件的 NotSync。
+    private func isSyncFrame(_ sb: CMSampleBuffer) -> Bool {
+        guard let arr = CMSampleBufferGetSampleAttachmentsArray(sb, createIfNecessary: false)
+                as? [[String: Any]], let first = arr.first else { return true }
+        if let notSync = first[kCMSampleAttachmentKey_NotSync as String] as? Bool {
+            return !notSync
+        }
+        if let depends = first[kCMSampleAttachmentKey_DependsOnOthers as String] as? Bool {
+            return !depends
+        }
+        return true
+    }
+
     private func paramSet(_ fmt: CMFormatDescription, _ index: Int) -> Data? {
         var size = 0
         var count = 0
@@ -163,10 +177,10 @@ final class H264Encoder {
     }
 }
 
-/// 全局 C 回调：从 refcon 找回 encoder，`frameNotSync` 取反就是关键帧。
+/// 全局 C 回调：从 refcon 找回 encoder。关键帧标记在 sample 附件里，不在 flags 里。
 private let rsH264Output: VTCompressionOutputCallback = {
-    refcon, _, status, flags, sampleBuffer in
+    refcon, _, status, _, sampleBuffer in
     guard status == noErr, let refcon, let sb = sampleBuffer else { return }
     let box = Unmanaged<H264Encoder.Box>.fromOpaque(refcon).takeUnretainedValue()
-    box.encoder?.handle(sb, key: !flags.contains(.frameNotSync))
+    box.encoder?.handle(sb)
 }
