@@ -110,6 +110,11 @@ private final class Client {
     private weak var server: HTTPServer?
     private var buf = Data()
     private var routed = false
+    /// 发送背压：上一帧还没写完就跳过下一帧，避免慢网 / 半开连接把 JPEG 排队堆在内存里，
+    /// 也避免观看端关页后仍持续编码推帧。
+    private let ioLock = NSLock()
+    private var frameInFlight = false
+    private var wsInFlight = false
     fileprivate var stream: CameraService.Pos?
     fileprivate var audio = false
     fileprivate var audioRate: Double = 48_000
@@ -131,16 +136,18 @@ private final class Client {
     private func readRequest() {
         conn.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, done, error in
             guard let self else { return }
-            if let d = data { self.buf.append(d) }
+            // 路由后不再需要任何入向数据，直接丢弃，防止长流客户端把 buf 撑大。
+            if !self.routed, let d = data { self.buf.append(d) }
             if !self.routed, let r = self.buf.range(of: Data("\r\n\r\n".utf8)) {
                 self.routed = true
                 let head = Data(self.buf[..<r.upperBound])
-                self.buf.removeSubrange(..<r.upperBound)
+                self.buf.removeAll()
                 self.route(head: head)
             }
-            if error != nil { self.forceClose(); return }
-            if done && self.stream == nil && !self.audio { self.forceClose(); return }
-            if self.stream == nil && !self.audio { self.readRequest() }
+            if error != nil || done { self.forceClose(); return }
+            // MJPEG / audio 也必须持续 receive：对端正常 FIN 时 NWConnection 状态不会变成
+            // .failed，只靠 send 报错检测会滞后几帧，导致关页后仍继续推流。
+            self.readRequest()
         }
     }
 
@@ -229,11 +236,18 @@ private final class Client {
     }
 
     func sendFrame(_ jpg: Data) {
+        ioLock.lock()
+        guard !frameInFlight else { ioLock.unlock(); return }
+        frameInFlight = true
+        ioLock.unlock()
+
         var part = Data("--rsframe\r\nContent-Type: image/jpeg\r\nContent-Length: \(jpg.count)\r\n\r\n".utf8)
         part.append(jpg)
         part.append(Data("\r\n".utf8))
         conn.send(content: part, completion: .contentProcessed { [weak self] err in
-            if err != nil { self?.forceClose() }
+            guard let self else { return }
+            self.ioLock.lock(); self.frameInFlight = false; self.ioLock.unlock()
+            if err != nil { self.forceClose() }
         })
     }
 
@@ -256,6 +270,11 @@ private final class Client {
     }
 
     func sendWS(_ payload: Data) {
+        ioLock.lock()
+        guard !wsInFlight else { ioLock.unlock(); return }
+        wsInFlight = true
+        ioLock.unlock()
+
         var f = Data([0x82])
         let n = payload.count
         if n < 126 {
@@ -269,7 +288,9 @@ private final class Client {
         }
         f.append(payload)
         conn.send(content: f, completion: .contentProcessed { [weak self] err in
-            if err != nil { self?.forceClose() }
+            guard let self else { return }
+            self.ioLock.lock(); self.wsInFlight = false; self.ioLock.unlock()
+            if err != nil { self.forceClose() }
         })
     }
 
