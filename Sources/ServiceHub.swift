@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import AVFoundation
+import UIKit
 
 /// 生命周期总控。主力机分时：
 /// - 前台：相机 + HTTP +（可选）中继全开，禁自动锁屏
@@ -38,6 +39,7 @@ final class ServiceHub: ObservableObject {
     private(set) var started = false
     private var watchdog: Timer?
     private var lastPublicFetch: TimeInterval = 0
+    private var lastAutoRebuild: TimeInterval = 0
 
     private init() {}
 
@@ -96,6 +98,16 @@ final class ServiceHub: ObservableObject {
             self.camera.checkFreeze()
             self.bootstrap()          // 内部 30s 节流，服务端配置轮换后自动生效
             DispatchQueue.main.async { self.cameraNote = self.camera.note }
+
+            // 自愈：相机被系统中断、且 app 已在前台时，10 秒限频重建会话。
+            // 中断后 AVCaptureSession.isRunning 可能仍为 true，只有重建才恢复出帧。
+            let now = Date.timeIntervalSinceReferenceDate
+            if UIApplication.shared.applicationState == .active,
+               self.camera.note.contains("中断"),
+               now - self.lastAutoRebuild > 10 {
+                self.lastAutoRebuild = now
+                self.camera.rebuild()
+            }
         }
         // 启动即向内置固定服务器拉配置，不再需要先连局域网网页填表。
         bootstrap(force: true)

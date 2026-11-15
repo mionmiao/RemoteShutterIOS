@@ -28,6 +28,9 @@ final class CameraService: NSObject, ObservableObject,
     private var photoHandlers: [Int64: (Data?) -> Void] = [:]
     private var wantRunning = false
     private var isMulti = false
+    /// 系统中断后 `AVCaptureSession.isRunning` 可能仍为 true，不能只靠 resume 重启，
+    /// 必须记住中断状态并在恢复时重建会话。
+    private var interrupted = false
     private var startedAt: TimeInterval = 0
     private var multiCamStartedAt: TimeInterval = 0
     private var observers: [NSObjectProtocol] = []
@@ -62,6 +65,7 @@ final class CameraService: NSObject, ObservableObject,
         h264?.invalidate()
         h264 = nil
         lastEncodeAt = 0
+        interrupted = false
         lock.unlock()
         // 保留最后一帧：切换主摄时 MJPEG 连接不断、画面不黑，新会话首帧到达后自然覆盖。
     }
@@ -130,11 +134,15 @@ final class CameraService: NSObject, ObservableObject,
         let ended = Notification.Name("AVCaptureSessionInterruptionEndedNotification")
         observers.append(c.addObserver(forName: interrupted,
                                        object: s, queue: nil) { [weak self] _ in
-            self?.publish("相机被系统中断（后台/被占用）")
+            guard let self else { return }
+            self.lock.lock(); self.interrupted = true; self.lock.unlock()
+            self.publish("相机被系统中断（后台/被占用）")
         })
         observers.append(c.addObserver(forName: ended,
                                        object: s, queue: nil) { [weak self] _ in
-            self?.resume()
+            guard let self else { return }
+            self.lock.lock(); self.interrupted = false; self.lock.unlock()
+            self.resume()
         })
         if wantRunning { s.startRunning() }
     }
@@ -150,6 +158,17 @@ final class CameraService: NSObject, ObservableObject,
     func resume() {
         wantRunning = true
         q.async {
+            self.lock.lock()
+            let broken = self.interrupted || self.session == nil
+            self.interrupted = false
+            self.lock.unlock()
+
+            // 中断过的会话往往 isRunning 仍为 true，但输入已被系统断开 —— 必须重建。
+            if broken {
+                self.session?.stopRunning()
+                self.build()
+                return
+            }
             guard let s = self.session, !s.isRunning else { return }
             self.startedAt = Date.timeIntervalSinceReferenceDate
             s.startRunning()

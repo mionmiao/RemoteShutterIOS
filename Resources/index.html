@@ -88,6 +88,7 @@
     <div>相机端为纯黑屏，所有控制在本页。点「后置 / 前置」切换物理摄像头（约 1 秒重建会话）。屏幕镜像、录像、系统内录、远程点击在 iOS 版未实现。</div>
     <div style="margin-top:8px">
       <button class="mini" id="h264Btn" style="min-height:36px;padding:0 14px">🎬 H.264 省流模式（低带宽，需 Safari 16.4+）</button>
+      <button class="mini" id="fixCamBtn" style="min-height:36px;padding:0 14px;margin-left:6px">🔄 恢复相机</button>
     </div>
   </div>
 
@@ -847,8 +848,13 @@
         (s.multiCamSupported === false ? ' · 本机不支持多摄' : '');
       watchHint.textContent = '固定观看短链：' + (s.watchPath || '/watch/phone1') +
         '?k=<VIEW_KEY>（收藏这一个，域名变化由服务端自动跳转）';
-      // 切换中的黄色提示优先，不被 3 秒轮询覆盖
-      if (s.primary && iosNote && !iosNote.classList.contains('busy')) {
+      // 相机被系统中断时优先提示：此时所有按钮点了都「没反应」，因为根本没有新帧。
+      const broken = (s.camera || '').indexOf('中断') >= 0;
+      const stuck = !!iosCamState && (iosCamState.textContent || '').indexOf('中断') >= 0;
+      if (broken) {
+        setIosCamState('⚠️ 手机端相机被系统中断：把 app 切回前台，或点「恢复相机」', true);
+      } else if (s.primary && (!iosNote || !iosNote.classList.contains('busy') || stuck)) {
+        // 切换中的黄色提示优先，不被 3 秒轮询覆盖
         setIosCamState('当前主摄：' + (s.primary === 'front' ? '前置' : '后置'), false);
       }
     }
@@ -859,6 +865,13 @@
       return fetch('/settings?' + q).then(x => x.json()).then(paintDevice).catch(function () { });
     }
     // 防御式绑定：任一元素缺失不应该让整块脚本中断（否则后面的隐藏/轮询/入口全失效）
+    const fixCamBtn = document.getElementById('fixCamBtn');
+    if (fixCamBtn) fixCamBtn.addEventListener('click', () => {
+      setIosCamState('正在重建相机…', true);
+      fetch('/settings?restart=1').then(x => x.json()).then(paintDevice).catch(function () {
+        setIosCamState('重建失败，请检查手机端 app 是否在前台', true);
+      });
+    });
     if (setMulti) setMulti.addEventListener('click', () => sendSetting('multiCam=' + (devSnap.multiCam ? '0' : '1')));
     if (setRestart) setRestart.addEventListener('click', () => {
       if (deviceStatus) deviceStatus.textContent = '正在重启相机…';
