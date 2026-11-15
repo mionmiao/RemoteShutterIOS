@@ -261,12 +261,16 @@
         var lastSample = 0;     // 轻微欠载时保持上一采样（下面改为静音填补，这里仅留作兜底）
         var primed = false;     // 预缓冲门控：队列足够才出声，吸收网络抖动
         var primeBytes = 8192;
+        // 档位 rate 是后端下发率；AudioContext 可能不支持自定义采样率（Safari），
+        // 此时按 srcRate/playRate 插值播放，保证音高不变、且上行仍按档位降带宽。
+        var srcRate = rate, playRate = rate, step = 1, acc = 0, consumed = 0;
 
         function disable() {
             try { if (ws) ws.close(); } catch (e) { }
             try { if (node) node.disconnect(); } catch (e) { }
             try { if (ctx) ctx.suspend(); } catch (e) { }
             on = false; q = []; primed = false; lastSample = 0;
+            acc = 0; consumed = 0;
             btn.textContent = idleText;
             btn.classList.remove('on');
             onStatus(labels.close || '声音已关闭');
@@ -281,8 +285,11 @@
                 } catch (e) {
                     ctx = new (global.AudioContext || global.webkitAudioContext)();
                 }
-                var deliver = ctx.sampleRate;   // 实际播放率；WebSocket 据此下发，后端重采样到该率
-                primeBytes = Math.max(4096, Math.floor(deliver / 1000 * 120 * 2)); // 预缓冲约 120ms 抗抖
+                srcRate = reqRate;              // 权威下发率：后端 resamplePCM 重采样到这个率
+                playRate = ctx.sampleRate || reqRate;
+                step = srcRate / playRate;
+                acc = 0; consumed = 0;
+                primeBytes = Math.max(4096, Math.floor(srcRate / 1000 * 120 * 2)); // 预缓冲约 120ms 抗抖
                 node = ctx.createScriptProcessor(4096, 1, 1);
                 node.onaudioprocess = function (e) {
                     var out = e.outputBuffer.getChannelData(0);
@@ -292,15 +299,20 @@
                         else { for (var i = 0; i < out.length; i++) out[i] = 0; return; }
                     }
                     for (var i = 0; i < out.length; i++) {
-                        if (q.length >= 2) {
+                        var want = Math.floor(acc), val = lastSample, got = false;
+                        // 按 step 推进输入游标：step<1 重复样本（上采样），step>1 跳过样本（降采样），
+                        // 都不改变音高。队列积压时一次追赶多个样本，防止延迟越积越大。
+                        while (consumed <= want && q.length >= 2) {
                             var lo = q.shift(), hi = q.shift();
                             var s = (hi << 8) | lo;
                             if (s > 32767) s -= 65536;
-                            lastSample = s / 32768;
-                            out[i] = lastSample;
-                        } else {
-                            out[i] = 0;   // 轻微欠载：静音填补，比维持上一采样更不易产生嗡嗡声
+                            val = s / 32768;
+                            consumed++;
+                            got = true;
                         }
+                        out[i] = got ? val : (q.length >= 2 ? val : 0);
+                        lastSample = out[i];
+                        acc += step;
                     }
                 };
                 node.connect(ctx.destination);
@@ -313,14 +325,14 @@
                 var dm = location.pathname.match(/^\/d\/([A-Za-z0-9_-]{1,64})\//);
                 if (dm) wsPath = '/d/' + dm[1] + path;
                 var viewK = new URLSearchParams(location.search).get('k');
-                var wsQuery = 'rate=' + deliver + (viewK ? '&k=' + encodeURIComponent(viewK) : '');
+                var wsQuery = 'rate=' + srcRate + (viewK ? '&k=' + encodeURIComponent(viewK) : '');
                 ws = new WebSocket(proto + location.host + wsPath + '?' + wsQuery);
                 ws.binaryType = 'arraybuffer';
                 ws.onopen = function () {
                     on = true; primed = false;
                     btn.textContent = liveText;
                     btn.classList.add('on');
-                    onStatus((labels.open || '声音已开启') + '（' + deliver + 'Hz）');
+                    onStatus((labels.open || '声音已开启') + '（' + srcRate / 1000 + 'kHz / 播放 ' + playRate / 1000 + 'kHz）');
                 };
                 ws.onmessage = function (ev) {
                     var arr = new Uint8Array(ev.data);
@@ -330,6 +342,7 @@
                 ws.onclose = function () {
                     if (on) {
                         on = false; q = []; primed = false;
+                        acc = 0; consumed = 0;
                         btn.textContent = idleText;
                         btn.classList.remove('on');
                         onStatus(labels.drop || '声音已断开');
@@ -343,8 +356,13 @@
         /** 切换音质（采样率）：通知后端改采集率，若正在播放则自动重连以应用新率。 */
         function setRate(r) {
             rate = r || 48000;
-            // 通知后端切换采集采样率（重采样到下发率，直接决定网络带宽）
-            fetch(qualityPath + '?rate=' + rate, { method: 'GET' }).catch(function () { });
+            // 公网页面在 /d/<id>/ 下，quality 路径也要带设备前缀，否则中继无法路由。
+            var qPath = qualityPath;
+            var dm = location.pathname.match(/^\/d\/([A-Za-z0-9_-]{1,64})\//);
+            if (dm) qPath = '/d/' + dm[1] + qualityPath;
+            var viewK = new URLSearchParams(location.search).get('k');
+            fetch(qPath + '?rate=' + rate + (viewK ? '&k=' + encodeURIComponent(viewK) : ''),
+                { method: 'GET' }).catch(function () { });
             if (on) { disable(); enable(); }
             else onStatus('🔧 音质已设为 ' + (rate / 1000) + 'kHz（下次开启声音生效）');
         }

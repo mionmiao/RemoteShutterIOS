@@ -283,7 +283,9 @@ final class CameraService: NSObject, ObservableObject,
         guard let pos = p, let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let image = CIImage(cvPixelBuffer: pb)
         guard let cg = ci.createCGImage(image, from: image.extent) else { return }
-        guard let jpg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.55) else { return }
+        // 公网链路优先保流畅：0.35 相比 0.55 单帧体积约降 30~40%，
+        // MJPEG 每帧独立编码、无帧间压缩，单帧大小直接决定上行带宽。
+        guard let jpg = UIImage(cgImage: cg).jpegData(compressionQuality: 0.35) else { return }
         let now = Date.timeIntervalSinceReferenceDate
         lock.lock()
         frames[pos] = jpg

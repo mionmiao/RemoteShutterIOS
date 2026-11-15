@@ -25,8 +25,10 @@ final class HTTPServer {
         l.newConnectionHandler = { [weak self] c in self?.accept(c) }
         l.start(queue: q)
 
+        // 30Hz 调度，但每个客户端按自己的 fps 取帧：中继会给公网 /video 追加 ?fps=8，
+        // 局域网直连不带参数仍保持 12fps。定时器频率高于最高帧率，避免量化误差把 8fps 拖成 6fps。
         let t = DispatchSource.makeTimerSource(queue: q)
-        t.schedule(deadline: .now(), repeating: 1.0 / 12.0)
+        t.schedule(deadline: .now(), repeating: 1.0 / 30.0)
         t.setEventHandler { [weak self] in self?.tick() }
         t.resume()
         pump = t
@@ -52,9 +54,12 @@ final class HTTPServer {
     private func tick() {
         lock.lock(); let all = Array(clients.values); lock.unlock()
         guard let hub else { return }
+        let now = Date.timeIntervalSinceReferenceDate
         for c in all {
+            // 每个客户端独立节流：公网 8fps（或 VPS 设的 5fps），局域网 12fps。
+            guard let pos = c.stream, c.claimFrameSlot(at: now) else { continue }
             // 单摄模式下两路 URL 都指向当前主摄；双摄模式下各走各的物理摄像头。
-            if let pos = c.stream, let jpg = hub.camera.latestFrame(pos) { c.sendFrame(jpg) }
+            if let jpg = hub.camera.latestFrame(pos) { c.sendFrame(jpg) }
         }
     }
 
@@ -115,9 +120,20 @@ private final class Client {
     private let ioLock = NSLock()
     private var frameInFlight = false
     private var wsInFlight = false
+    private var lastFrameAt: TimeInterval = 0
+    /// 每客户端帧率。局域网默认 12fps；中继 rewriteForPublic 会追加 ?fps=<PUBLIC_FPS>。
+    fileprivate var fps: Double = 12
     fileprivate var stream: CameraService.Pos?
     fileprivate var audio = false
     fileprivate var audioRate: Double = 48_000
+
+    /// 原子地占用一个发送时隙：未到间隔、或上一帧还没写完就跳过（丢帧保实时，不排队）。
+    func claimFrameSlot(at now: TimeInterval) -> Bool {
+        ioLock.lock(); defer { ioLock.unlock() }
+        guard !frameInFlight, now - lastFrameAt >= 1.0 / fps else { return false }
+        lastFrameAt = now
+        return true
+    }
 
     init(conn: NWConnection, server: HTTPServer) {
         self.conn = conn
@@ -195,9 +211,10 @@ private final class Client {
             ServiceHub.shared.setPrimary(c)
             serveStatic("view.html")
         case ("GET", "/cam/mirror"): unsupported()
-        case ("GET", "/video"): startMJPEG(.back)
-        case ("GET", "/video/front"): startMJPEG(.front)
+        case ("GET", "/video"): startMJPEG(.back, query: query)
+        case ("GET", "/video/front"): startMJPEG(.front, query: query)
         case ("GET", "/audio"): startAudioWS(key: headers["sec-websocket-key"] ?? "", query: query)
+        case ("GET", "/audio/quality"): startAudioQuality(query: query)
         case ("POST", "/capture"): capture(query: query)
         case ("GET", "/last"): lastPhoto()
         case ("GET", "/params"): params(query: query)
@@ -224,7 +241,12 @@ private final class Client {
         send(data, type: RSUtil.mime(file))
     }
 
-    private func startMJPEG(_ pos: CameraService.Pos) {
+    private func startMJPEG(_ pos: CameraService.Pos, query: String) {
+        // 中继 rewriteForPublic 会追加 ?fps=<PUBLIC_FPS>；Android 端支持，iOS 端此前忽略，
+        // 导致公网降帧完全失效、12fps 全速推流挤爆上行。这里补齐。
+        if let raw = qs(query, "fps"), let v = Double(raw), v >= 1, v <= 30 {
+            fps = v
+        }
         let h = "HTTP/1.1 200 OK\r\n" +
                 "Content-Type: multipart/x-mixed-replace; boundary=rsframe\r\n" +
                 "Cache-Control: no-store, no-cache, no-transform\r\n" +
@@ -249,6 +271,13 @@ private final class Client {
             self.ioLock.lock(); self.frameInFlight = false; self.ioLock.unlock()
             if err != nil { self.forceClose() }
         })
+    }
+
+    /// 前端音质档位按钮会请求这个路径。下发率由随后重建的 /audio?rate= 决定，
+    /// 这里只回执，避免 501 噪音；真正的降带宽在 resamplePCM。
+    private func startAudioQuality(query: String) {
+        send(RSUtil.json(["ok": true, "rate": qs(query, "rate") ?? "48000"]),
+             type: "application/json")
     }
 
     private func startAudioWS(key: String, query: String) {
